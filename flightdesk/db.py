@@ -6,7 +6,7 @@ import random
 from datetime import datetime, timedelta
 
 import mysql.connector
-from mysql.connector import Error
+from .geo import AIRPORT_COORDINATES, great_circle_distance
 
 DATABASE = 'flight_management'
 AIRPORTS = [('DEL', 'New Delhi'), ('BOM', 'Mumbai'), ('BLR', 'Bengaluru'), ('HYD', 'Hyderabad'), ('MAA', 'Chennai'), ('CCU', 'Kolkata'), ('GOI', 'Goa'), ('COK', 'Kochi')]
@@ -49,6 +49,7 @@ class Database:
         if 'delay_locked' not in columns:
             cursor.execute('ALTER TABLE flights ADD COLUMN delay_locked BOOLEAN NOT NULL DEFAULT FALSE')
         cursor.execute("CREATE TABLE IF NOT EXISTS simulator_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
+        cursor.execute("CREATE TABLE IF NOT EXISTS simulator_network_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
         self.connection.commit()
         cursor.close()
         self.seed()
@@ -199,6 +200,50 @@ class Database:
             finally:
                 cur.close()
 
+    def generate_network_flights(self, now=None):
+        """Add a repeatable network of fictional routes without changing existing flights."""
+        now=now or datetime.now()
+        routes=[
+            ('DEL','New Delhi','DXB','Dubai'),('BOM','Mumbai','LHR','London'),('DEL','New Delhi','LHR','London'),
+            ('BOM','Mumbai','SIN','Singapore'),('DEL','New Delhi','SIN','Singapore'),('BLR','Bengaluru','SIN','Singapore'),
+            ('DEL','New Delhi','JFK','New York'),('BOM','Mumbai','JFK','New York'),('DEL','New Delhi','SFO','San Francisco'),
+            ('DEL','New Delhi','CDG','Paris'),('BOM','Mumbai','FRA','Frankfurt'),('DEL','New Delhi','FRA','Frankfurt'),
+            ('BOM','Mumbai','DXB','Dubai'),('HYD','Hyderabad','DXB','Dubai'),('COK','Kochi','DXB','Dubai'),
+            ('DEL','New Delhi','DOH','Doha'),('BOM','Mumbai','DOH','Doha'),('DEL','New Delhi','BKK','Bangkok'),
+            ('CCU','Kolkata','BKK','Bangkok'),('DEL','New Delhi','KTM','Kathmandu'),('MAA','Chennai','CMB','Colombo'),
+            ('BLR','Bengaluru','KUL','Kuala Lumpur'),('DEL','New Delhi','SYD','Sydney'),('DEL','New Delhi','NRT','Tokyo'),
+            ('LHR','London','JFK','New York'),('JFK','New York','LAX','Los Angeles'),('SFO','San Francisco','NRT','Tokyo'),
+            ('SIN','Singapore','SYD','Sydney'),('DXB','Dubai','CDG','Paris'),('FRA','Frankfurt','LHR','London'),
+            ('BOM','Mumbai','GOI','Goa'),('DEL','New Delhi','AMD','Ahmedabad'),('BLR','Bengaluru','PNQ','Pune'),
+            ('DEL','New Delhi','JAI','Jaipur'),('DEL','New Delhi','IXC','Chandigarh'),('BOM','Mumbai','TRV','Thiruvananthapuram'),
+            ('BLR','Bengaluru','CCU','Kolkata'),('HYD','Hyderabad','MAA','Chennai'),('DEL','New Delhi','GAU','Guwahati'),
+        ]
+        for offset in range(7):
+            date=(now+timedelta(days=offset)).date(); cur=self.cursor()
+            try:
+                self.connection.start_transaction(); cur.execute('INSERT IGNORE INTO simulator_network_days (flight_date) VALUES (%s)',(date,))
+                if cur.rowcount:
+                    rows=[]
+                    for i,(a,ac,b,bc) in enumerate(routes):
+                        if a not in AIRPORT_COORDINATES or b not in AIRPORT_COORDINATES: continue
+                        distance=great_circle_distance(AIRPORT_COORDINATES[a],AIRPORT_COORDINATES[b])
+                        duration=max(60,round((distance/800*60+35)/5)*5)
+                        for direction in (0,1):
+                            origin,ocity,dest,dcity=(a,ac,b,bc) if not direction else (b,bc,a,ac)
+                            # Fictional schedules use the computer's local time throughout.
+                            minute=(i*37 + direction*719) % (24*60)
+                            departure=datetime.combine(date,datetime.min.time())+timedelta(minutes=minute)
+                            arrival=departure+timedelta(minutes=duration)
+                            if arrival<=now: continue
+                            price=max(2500,min(140000,round((distance*7+1500)/100)*100))
+                            rows.append((f'TW {1000+i*2+direction}','TripWala Simulated',origin,ocity,dest,dcity,departure,arrival,price,180))
+                    if rows: cur.executemany('INSERT INTO flights (flight_number,airline,origin_code,origin_city,destination_code,destination_city,departure,arrival,price,total_seats) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',rows)
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback(); raise
+            finally:
+                cur.close()
+
     def simulate_delays(self, rng=None):
         """Once within two hours of departure, give each untouched flight one delay roll."""
         rng = rng or random.SystemRandom()
@@ -217,6 +262,7 @@ class Database:
         now = datetime.now()
         if self._last_schedule_check is None or now - self._last_schedule_check >= timedelta(minutes=1):
             self.generate_flights(now)
+            self.generate_network_flights(now)
             self._last_schedule_check = now
         if self._last_delay_check is None or now - self._last_delay_check >= timedelta(seconds=30):
             self.simulate_delays()

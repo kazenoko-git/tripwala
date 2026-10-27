@@ -4,11 +4,12 @@ from pathlib import Path
 import json
 import re
 
-from PySide6.QtCore import Qt, QTimer, QDate, QDateTime, QPointF
+from PySide6.QtCore import Qt, QTimer, QDate, QDateTime, QPointF, Signal
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient, QPixmap, QIcon, QPolygonF
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QFrame, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QComboBox, QAbstractItemView, QInputDialog, QScrollArea, QDateEdit, QCheckBox, QProgressBar)
 from mysql.connector import Error
 from .db import Database
+from .geo import AIRPORT_COORDINATES, great_circle_point
 
 STYLE = """
 QWidget { background: #f8f3eb; color: #17243c; font-family: "Helvetica Neue", "Arial"; font-size: 13px; }
@@ -335,37 +336,37 @@ class BookingPage(QWidget):
         except (Error, ValueError) as exc: QMessageBox.warning(self,'Could not book flight',str(exc))
 
 
-def simulated_progress(flight, now=None):
-    """Schedule-derived progress; no live aircraft position is implied."""
+def flight_fraction(flight, now=None):
+    """Fraction between simulated departure and arrival, adjusted for delay."""
     now=now or datetime.now()
     if flight['status']=='Cancelled': return None
     departure=flight['departure']+timedelta(minutes=flight['delay_minutes'])
     arrival=flight['arrival']+timedelta(minutes=flight['delay_minutes'])
-    if flight['status']=='Arrived': return 100
-    if flight['status']!='Departed': return 0
+    if flight['status']=='Arrived': return 1.0
+    if flight['status']!='Departed': return 0.0
     duration=(arrival-departure).total_seconds()
-    if duration<=0: return 0
-    return max(0,min(100,int((now-departure).total_seconds()/duration*100)))
+    if duration<=0: return 0.0
+    return max(0.0,min(1.0,(now-departure).total_seconds()/duration))
 
 
-# Coordinates for the airports used by the simulator. Admin-created airports
-# outside this list remain trackable by time, without a fabricated map position.
-AIRPORT_COORDINATES = {
-    'DEL': (77.1031, 28.5562), 'BOM': (72.8679, 19.0896),
-    'BLR': (77.7066, 13.1986), 'HYD': (78.4294, 17.2403),
-    'MAA': (80.1693, 12.9941), 'CCU': (88.4467, 22.6547),
-    'GOI': (73.8314, 15.3808), 'COK': (76.4019, 10.1520),
-}
+def simulated_progress(flight, now=None):
+    fraction=flight_fraction(flight,now)
+    return None if fraction is None else int(fraction*100)
 
 
 class WorldRouteMap(QWidget):
-    """Offline equirectangular world map with an illustrative route."""
+    """Offline world map of all airborne simulated aircraft."""
+    flight_clicked=Signal(int)
+
     def __init__(self):
-        super().__init__(); self.setMinimumHeight(200); self.flight=None; self.fraction=None; self.zoomed=False
+        super().__init__(); self.setMinimumHeight(200); self.flight=None; self.airborne=[]; self.zoomed=False; self.markers=[]
         with (Path(__file__).resolve().parent / 'assets' / 'world-land-110m.geojson').open(encoding='utf-8') as stream:
             self.land=json.load(stream)['features']
-    def set_flight(self, flight, progress):
-        self.flight=flight; self.fraction=None if progress is None else progress/100; self.update()
+        self.setToolTip('Click an aircraft to select its flight. Positions are simulated.')
+    def set_flight(self, flight, progress=None):
+        self.flight=flight; self.update()
+    def set_airborne(self, flights):
+        self.airborne=flights; self.update()
     def set_zoom(self, zoomed):
         self.zoomed=zoomed; self.update()
     def point(self, lon, lat):
@@ -375,13 +376,20 @@ class WorldRouteMap(QWidget):
         if self.zoomed and self.flight:
             start=AIRPORT_COORDINATES.get(self.flight['origin_code']); end=AIRPORT_COORDINATES.get(self.flight['destination_code'])
             if start and end:
-                cx=(self.width()-width)/2+((start[0]+end[0])/2+180)*width/360
-                cy=(self.height()-height)/2+(90-(start[1]+end[1])/2)*height/180
-                x=(x-cx)*5+self.width()/2; y=(y-cy)*5+self.height()/2
+                mid_lon,mid_lat=great_circle_point(start,end,.5)
+                x=self.width()/2+((lon-mid_lon+180)%360-180)*width/360*5
+                y=self.height()/2+(mid_lat-lat)*height/180*5
         return QPointF(x,y)
+    def mousePressEvent(self,event):
+        position=event.position()
+        candidates=[((pt.x()-position.x())**2+(pt.y()-position.y())**2,fid) for pt,fid in self.markers]
+        if candidates:
+            distance,fid=min(candidates)
+            if distance<=144: self.flight_clicked.emit(fid)
+        super().mousePressEvent(event)
     def paintEvent(self,event):
         p=QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing); p.fillRect(self.rect(),QColor('#123363'))
-        grid=QPen(QColor('#294c77'),1); p.setPen(grid)
+        p.setPen(QPen(QColor('#294c77'),1))
         for lon in range(-180,181,30): p.drawLine(self.point(lon,-90),self.point(lon,90))
         for lat in range(-60,61,30): p.drawLine(self.point(-180,lat),self.point(180,lat))
         p.setPen(QPen(QColor('#7196a9'),.7)); p.setBrush(QColor('#678fa2'))
@@ -389,36 +397,57 @@ class WorldRouteMap(QWidget):
             geom=feature.get('geometry') or {}; kind=geom.get('type'); coordinates=geom.get('coordinates',[])
             polygons=coordinates if kind=='MultiPolygon' else [coordinates] if kind=='Polygon' else []
             for polygon in polygons:
-                if polygon and polygon[0]: p.drawPolygon(QPolygonF([self.point(lon,lat) for lon,lat,*_ in polygon[0]]))
+                if polygon and polygon[0]:
+                    # Do not wrap individual coast polygons in zoom mode: clipping handles off-screen geometry.
+                    points=[self.point(lon,lat) for lon,lat,*_ in polygon[0]]
+                    if points: p.drawPolygon(QPolygonF(points))
         if self.flight:
             start=AIRPORT_COORDINATES.get(self.flight['origin_code']); end=AIRPORT_COORDINATES.get(self.flight['destination_code'])
             if start and end:
-                a=self.point(*start); b=self.point(*end); p.setBrush(Qt.BrushStyle.NoBrush); p.setPen(QPen(QColor('#ffc46c'),2,Qt.PenStyle.DashLine)); p.drawLine(a,b)
-                for point in (a,b): p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor('#ffbe64')); p.drawEllipse(point,4,4)
-                if self.fraction is not None:
-                    loc=QPointF(a.x()+(b.x()-a.x())*self.fraction,a.y()+(b.y()-a.y())*self.fraction)
-                    p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor('#ff8733')); p.drawEllipse(loc,8,8); p.setPen(QPen(QColor('white'),2)); p.drawEllipse(loc,8,8)
+                p.setBrush(Qt.BrushStyle.NoBrush); p.setPen(QPen(QColor('#ffc46c'),2,Qt.PenStyle.DashLine))
+                coords=[great_circle_point(start,end,i/80) for i in range(81)]
+                for previous,current in zip(coords,coords[1:]):
+                    if abs(current[0]-previous[0])<180: p.drawLine(self.point(*previous),self.point(*current))
+                for coord in (start,end): p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor('#ffc46c')); p.drawEllipse(self.point(*coord),4,4)
+        self.markers=[]; selected_id=self.flight['id'] if self.flight else None
+        for flight in sorted(self.airborne,key=lambda f:f['id']==selected_id):
+            start=AIRPORT_COORDINATES.get(flight['origin_code']); end=AIRPORT_COORDINATES.get(flight['destination_code'])
+            fraction=flight_fraction(flight)
+            if not start or not end or fraction is None: continue
+            loc=self.point(*great_circle_point(start,end,fraction))
+            if not (0<=loc.x()<=self.width() and 0<=loc.y()<=self.height()): continue
+            selected=flight['id']==selected_id; radius=7 if selected else 4
+            p.setPen(QPen(QColor('#ffffff') if selected else QColor('#103663'),2 if selected else 1)); p.setBrush(QColor('#ff8733') if selected else QColor('#72e5dc')); p.drawEllipse(loc,radius,radius)
+            self.markers.append((loc,flight['id']))
         p.end()
 
 
 class FlightTracker(QWidget):
     def __init__(self, db):
         super().__init__(); self.db=db; self.rows=[]; self.snapshot=None
-        layout=QVBoxLayout(self); layout.setContentsMargins(42,28,42,28); layout.setSpacing(14)
-        header=QHBoxLayout(); intro=QVBoxLayout(); intro.addWidget(label('Flight tracker','title')); intro.addWidget(label('Follow a simulated journey, from boarding to arrival.','subtitle')); header.addLayout(intro); header.addStretch()
-        tag=label('●  SIMULATION'); tag.setStyleSheet('color:#136c5b; background:#d9f2e7; padding:9px 14px; border-radius:12px; font-weight:800;'); header.addWidget(tag); layout.addLayout(header)
+        layout=QVBoxLayout(self); layout.setContentsMargins(28,18,28,18); layout.setSpacing(10)
+        header=QHBoxLayout(); title=label('Flight tracker'); title.setStyleSheet('font-size:25px; font-weight:800; color:#102e68;'); header.addWidget(title)
+        tag=label('●  SIMULATION'); tag.setStyleSheet('color:#136c5b; background:#d9f2e7; padding:7px 12px; border-radius:10px; font-size:11px; font-weight:800;'); header.addWidget(tag); header.addStretch()
+        self.count=label('','subtitle'); header.addWidget(self.count); layout.addLayout(header)
         search=QHBoxLayout(); self.filter=field('Search flight number, airline or airport'); self.filter.returnPressed.connect(self.refresh); search.addWidget(self.filter,2)
-        search.addWidget(button('Find flights',self.refresh)); self.selector=QComboBox(); self.selector.setMinimumWidth(360); self.selector.currentIndexChanged.connect(self.show_selected); search.addWidget(self.selector,3); layout.addLayout(search)
-        self.count=label('','subtitle'); layout.addWidget(self.count)
-        self.card=QFrame(); self.card.setObjectName('trackerCard'); self.card.setStyleSheet('QFrame#trackerCard { background:#163a83; border-radius:18px; } QFrame#trackerCard QLabel { background:transparent; color:white; }'); card=QVBoxLayout(self.card); card.setContentsMargins(30,26,30,26); card.setSpacing(12)
-        top=QHBoxLayout(); self.flight_name=label('Choose a flight'); self.flight_name.setStyleSheet('font-size:18px; font-weight:800; color:white;'); top.addWidget(self.flight_name); top.addStretch(); self.status=label(''); self.status.setStyleSheet('font-size:12px; color:#ffd08a; font-weight:800;'); top.addWidget(self.status); card.addLayout(top)
-        self.route=label('—    ✈    —'); self.route.setAlignment(Qt.AlignmentFlag.AlignCenter); self.route.setStyleSheet('font-size:22px; font-weight:800; color:white;'); card.addWidget(self.route)
-        self.map=WorldRouteMap(); card.addWidget(self.map,1)
-        map_controls=QHBoxLayout(); map_controls.addStretch(); world=button('World view',lambda:self.map.set_zoom(False),'secondary'); route=button('Zoom to route',lambda:self.map.set_zoom(True),'secondary'); world.setStyleSheet('background:#dbe9fb; color:#173a6d; border-radius:6px; padding:6px 12px;'); route.setStyleSheet('background:#dbe9fb; color:#173a6d; border-radius:6px; padding:6px 12px;'); map_controls.addWidget(world); map_controls.addWidget(route); card.addLayout(map_controls)
-        self.progress=QProgressBar(); self.progress.setRange(0,100); self.progress.setTextVisible(False); self.progress.setFixedHeight(10); self.progress.setStyleSheet('QProgressBar { background:#345991; border:0; border-radius:5px; } QProgressBar::chunk { background:#ff9348; border-radius:5px; }'); card.addWidget(self.progress)
-        self.journey=label('Select a flight to see its journey.'); self.journey.setAlignment(Qt.AlignmentFlag.AlignCenter); self.journey.setStyleSheet('color:#d8e6ff; font-size:13px;'); card.addWidget(self.journey); layout.addWidget(self.card,1)
-        self.times=label(''); self.times.setWordWrap(True); self.times.setStyleSheet('background:#fffdf8; border:1px solid #ecdcc9; border-radius:12px; padding:18px; color:#1b3153; font-size:14px;'); layout.addWidget(self.times)
-        note=label('Illustrative progress based on simulated times and delays • Not live GPS or real flight data','subtitle'); note.setWordWrap(True); layout.addWidget(note)
+        search.addWidget(button('Find flights',self.refresh)); self.selector=QComboBox(); self.selector.setMinimumWidth(320); self.selector.currentIndexChanged.connect(self.show_selected); search.addWidget(self.selector,3); layout.addLayout(search)
+        content=QHBoxLayout(); content.setSpacing(12); layout.addLayout(content,1)
+        self.card=QFrame(); self.card.setObjectName('trackerCard'); self.card.setStyleSheet('QFrame#trackerCard { background:#123363; border-radius:14px; } QFrame#trackerCard QLabel { background:transparent; color:#dce9fa; }'); card=QVBoxLayout(self.card); card.setContentsMargins(8,8,8,10); card.setSpacing(6)
+        self.map=WorldRouteMap(); self.map.flight_clicked.connect(self.select_from_map); card.addWidget(self.map,1)
+        controls=QHBoxLayout(); legend=label('● Selected   ● Airborne   ·   Click an aircraft'); legend.setStyleSheet('color:#d2e7ff; font-size:11px;'); controls.addWidget(legend); controls.addStretch()
+        world=button('World view',lambda:self.map.set_zoom(False),'secondary'); route=button('Zoom to route',lambda:self.map.set_zoom(True),'secondary')
+        for control in (world,route): control.setStyleSheet('background:#dbe9fb; color:#173a6d; border-radius:6px; padding:7px 11px;'); controls.addWidget(control)
+        card.addLayout(controls); content.addWidget(self.card,4)
+        panel=QFrame(); panel.setObjectName('flightDetails'); panel.setMinimumWidth(260); panel.setMaximumWidth(315); panel.setStyleSheet('QFrame#flightDetails { background:#fffdf8; border:1px solid #ecdcc9; border-radius:14px; } QFrame#flightDetails QLabel { background:transparent; }'); details=QVBoxLayout(panel); details.setContentsMargins(20,22,20,20); details.setSpacing(12)
+        eyebrow=label('SELECTED FLIGHT'); eyebrow.setStyleSheet('color:#8193aa; font-size:10px; font-weight:800;'); details.addWidget(eyebrow)
+        self.flight_name=label('Choose a flight'); self.flight_name.setWordWrap(True); self.flight_name.setStyleSheet('font-size:17px; font-weight:800; color:#19365e;'); details.addWidget(self.flight_name)
+        self.status=label(''); self.status.setStyleSheet('font-size:11px; color:#d16b29; font-weight:800;'); details.addWidget(self.status)
+        self.route=label('—    ✈    —'); self.route.setWordWrap(True); self.route.setStyleSheet('font-size:24px; font-weight:800; color:#15376d;'); details.addWidget(self.route)
+        self.journey=label('Select a flight to see its journey.'); self.journey.setWordWrap(True); self.journey.setStyleSheet('color:#5d718b; font-size:12px;'); details.addWidget(self.journey)
+        self.progress=QProgressBar(); self.progress.setRange(0,100); self.progress.setTextVisible(False); self.progress.setFixedHeight(8); self.progress.setStyleSheet('QProgressBar { background:#e2e8f1; border:0; border-radius:4px; } QProgressBar::chunk { background:#ff9348; border-radius:4px; }'); details.addWidget(self.progress)
+        separator=QFrame(); separator.setFrameShape(QFrame.Shape.HLine); separator.setStyleSheet('color:#e4e9f0;'); details.addWidget(separator)
+        self.times=label(''); self.times.setWordWrap(True); self.times.setStyleSheet('color:#4f6380; font-size:12px;'); details.addWidget(self.times); details.addStretch()
+        note=label('Simulated positions based on schedules. Not live GPS.'); note.setWordWrap(True); note.setStyleSheet('color:#8293aa; font-size:11px;'); details.addWidget(note); content.addWidget(panel,1)
 
     def refresh(self):
         term=self.filter.text().strip(); like='%'+term+'%'
@@ -433,7 +462,20 @@ class FlightTracker(QWidget):
             index=self.selector.findData(selected)
             if index>=0: self.selector.setCurrentIndex(index)
             self.selector.blockSignals(False)
-        self.count.setText(f'{len(rows)} flights shown · search by flight number or airport'); self.show_selected()
+        airborne=self.db.query("SELECT * FROM flights WHERE status='Departed' AND NOW() < DATE_ADD(arrival, INTERVAL delay_minutes MINUTE)")
+        self.map.set_airborne(airborne)
+        mapped=sum(f['origin_code'] in AIRPORT_COORDINATES and f['destination_code'] in AIRPORT_COORDINATES for f in airborne)
+        self.count.setText(f'{mapped} of {len(airborne)} airborne flights on the map  ·  {len(rows)} flights in selector'); self.show_selected()
+
+    def select_from_map(self, fid):
+        index=self.selector.findData(fid)
+        if index<0:
+            self.filter.clear(); self.snapshot=None; self.refresh(); index=self.selector.findData(fid)
+        if index<0:
+            flight=next((f for f in self.map.airborne if f['id']==fid),None)
+            if flight:
+                self.rows.append(flight); self.selector.addItem(f"{flight['flight_number']}  ·  {flight['origin_code']} → {flight['destination_code']}  ·  {flight['departure'].strftime('%d %b %H:%M')}",fid); index=self.selector.count()-1
+        if index>=0: self.selector.setCurrentIndex(index)
 
     def show_selected(self, *_):
         fid=self.selector.currentData(); flight=next((f for f in self.rows if f['id']==fid),None)
@@ -452,7 +494,7 @@ class FlightTracker(QWidget):
             message += '  ·  Map coordinates unavailable for this route'
         self.journey.setText(message)
         delay=timedelta(minutes=flight['delay_minutes']); departure=flight['departure']+delay; arrival=flight['arrival']+delay
-        self.times.setText(f"{flight['origin_city']}  →  {flight['destination_city']}\nScheduled: {dt(flight['departure'])}  →  {dt(flight['arrival'])}\nEstimated: {dt(departure)}  →  {dt(arrival)}")
+        self.times.setText(f"{flight['origin_city']} → {flight['destination_city']}\n\nSCHEDULED\n{dt(flight['departure'])}\n→ {dt(flight['arrival'])}\n\nESTIMATED\n{dt(departure)}\n→ {dt(arrival)}\n\nComputer local time")
 
 
 class Dashboard(QWidget):

@@ -14,11 +14,11 @@ Screenshots show illustrative sample data.
 
 - Register and sign in as a traveller; passwords are salted and hashed.
 - Search flights by origin, destination and optional departure date, enter traveller and contact details, review the fare, book seats, see bookings and cancel future bookings.
-- Track simulated flights on an offline world map by flight number, airline, city or airport. The aircraft position is an illustrative interpolation based on scheduled times and delays, not live GPS. Map coordinates are included for the eight seeded airports; other admin-created airports show status and timing without a map position.
+- See all currently airborne simulated flights on an offline world map, select one by clicking its marker or searching, and zoom to its route. Positions follow an illustrative great-circle path and use simulated schedules and delays, not live GPS or real airline flight paths. Airport coordinates cover over 4,000 airports; flights without known coordinates show timing and status without a map marker.
 - Sign in as an administrator to add flights, set delays, cancel flights and view all bookings.
 - A local timer updates flight statuses every 2 seconds while the app is open. Flight times advance with the real clock; reopening the app catches statuses up.
-- The simulator maintains seven calendar days of fictional flights and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.
-- Flights are fictional demonstration records, not live airline data. The simulation runs only while the app is open; missed delay rolls are not replayed after reopening.
+- The simulator maintains seven calendar days of fictional domestic and international flights, with approximate distance-based flight durations for the expanded network, and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.
+- Flights are fictional demonstration records, not live airline data. All flight times use the computer’s local time, including international flights; the app does not calculate airport time zones. Existing flights keep their original schedules. The simulation runs only while the app is open; missed delay rolls are not replayed after reopening.
 
 ## Requirements
 
@@ -67,3 +67,5 @@ Bookings are inserted in a transaction that locks the flight record and checks a
 - **Dependencies fail to install:** use a Python version supported by current PySide6 wheels, such as Python 3.12 or 3.13.
 
 The offline world map uses [Natural Earth 1:110m land data](https://www.naturalearthdata.com/about/terms-of-use/), which is public domain.
+
+Airport coordinates are bundled from the [OurAirports open-data project](https://ourairports.com/data/); the app does not contact it at runtime.
