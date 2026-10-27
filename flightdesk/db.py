@@ -12,6 +12,27 @@ DATABASE = 'flight_management'
 AIRPORTS = [('DEL', 'New Delhi'), ('BOM', 'Mumbai'), ('BLR', 'Bengaluru'), ('HYD', 'Hyderabad'), ('MAA', 'Chennai'), ('CCU', 'Kolkata'), ('GOI', 'Goa'), ('COK', 'Kochi')]
 
 
+CITY_ALIASES = {'bangalore':'Bengaluru', 'bombay':'Mumbai', 'calcutta':'Kolkata', 'madras':'Chennai', 'cochin':'Kochi', 'trivandrum':'Thiruvananthapuram'}
+INDIAN_AIRPORTS = {'DEL','BOM','BLR','HYD','MAA','CCU','GOI','COK','AMD','PNQ','JAI','IXC','TRV','GAU'}
+
+
+def normalize_city(value):
+    value=value.strip()
+    return CITY_ALIASES.get(value.casefold(),value)
+
+
+def airline_for_route(origin, destination, number):
+    endpoints={origin,destination}
+    if endpoints <= INDIAN_AIRPORTS: return ('6E','IndiGo') if number % 2 else ('AI','Air India')
+    if 'DXB' in endpoints: return 'EK','Emirates'
+    if 'DOH' in endpoints: return 'QR','Qatar Airways'
+    if 'SIN' in endpoints: return 'SQ','Singapore Airlines'
+    if 'LHR' in endpoints: return 'BA','British Airways'
+    if endpoints == {'JFK','LAX'}: return 'AA','American Airlines'
+    if endpoints == {'SFO','NRT'}: return 'NH','All Nippon Airways'
+    return 'AI','Air India'
+
+
 def hash_password(password, salt=None):
     salt = salt or os.urandom(16).hex()
     digest = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 240000).hex()
@@ -50,9 +71,11 @@ class Database:
             cursor.execute('ALTER TABLE flights ADD COLUMN delay_locked BOOLEAN NOT NULL DEFAULT FALSE')
         cursor.execute("CREATE TABLE IF NOT EXISTS simulator_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
         cursor.execute("CREATE TABLE IF NOT EXISTS simulator_network_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
+        cursor.execute("CREATE TABLE IF NOT EXISTS simulator_domestic_v2_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
         self.connection.commit()
         cursor.close()
         self.seed()
+        self.relabel_network_flights()
 
     def cursor(self, dictionary=True):
         self.connection.ping(reconnect=True, attempts=1, delay=0)
@@ -85,7 +108,7 @@ class Database:
         if not self.query('SELECT id FROM flights LIMIT 1'):
             now = datetime.now().replace(second=0, microsecond=0)
             rng = random.Random(42)
-            airlines = [('AI', 'Air India'), ('6E', 'IndiGo'), ('UK', 'Vistara'), ('SG', 'SpiceJet')]
+            airlines = [('AI', 'Air India'), ('6E', 'IndiGo'), ('IX', 'Air India Express'), ('SG', 'SpiceJet')]
             rows = []
             for day in range(7):
                 for i in range(24):
@@ -116,6 +139,7 @@ class Database:
                  FROM flights f LEFT JOIN bookings b ON b.flight_id=f.id
                  WHERE f.departure > NOW() AND f.status NOT IN ('Cancelled','Departed','Arrived')"""
         params = []
+        origin=normalize_city(origin); destination=normalize_city(destination)
         if origin:
             sql += ' AND (f.origin_city LIKE %s OR f.origin_code LIKE %s)'
             params += [f'%{origin}%', f'%{origin}%']
@@ -200,6 +224,36 @@ class Database:
             finally:
                 cur.close()
 
+    def relabel_network_flights(self):
+        """Update older generated labels in place; flight and booking IDs are preserved."""
+        rows=self.query("SELECT id, flight_number, origin_code, destination_code FROM flights WHERE airline=%s AND flight_number LIKE %s",('TripWala Simulated','TW %'))
+        for row in rows:
+            suffix=row['flight_number'][3:]
+            if not suffix.isdigit() or not 1000 <= int(suffix) < 1078: continue
+            prefix,name=airline_for_route(row['origin_code'],row['destination_code'],int(suffix)-1000)
+            self.execute("UPDATE flights SET airline=%s, flight_number=%s WHERE id=%s AND airline=%s",(name,f'{prefix} {suffix}',row['id'],'TripWala Simulated'))
+
+    def generate_bengaluru_chennai(self, now=None):
+        """Add a common domestic route once per day on existing and new installs."""
+        now=now or datetime.now()
+        for offset in range(7):
+            date=(now+timedelta(days=offset)).date(); cur=self.cursor()
+            try:
+                self.connection.start_transaction(); cur.execute('INSERT IGNORE INTO simulator_domestic_v2_days (flight_date) VALUES (%s)',(date,))
+                if cur.rowcount:
+                    rows=[]
+                    for direction,(origin,ocity,dest,dcity) in enumerate([('BLR','Bengaluru','MAA','Chennai'),('MAA','Chennai','BLR','Bengaluru')]):
+                        for i,hour in enumerate((6,10,14,19)):
+                            depart=datetime.combine(date,datetime.min.time())+timedelta(hours=hour,minutes=direction*30)
+                            if depart<=now: continue
+                            prefix,name=airline_for_route(origin,dest,i+direction)
+                            rows.append((f'{prefix} {800+direction*10+i}',name,origin,ocity,dest,dcity,depart,depart+timedelta(minutes=70),3200+i*500,180))
+                    if rows: cur.executemany('INSERT INTO flights (flight_number,airline,origin_code,origin_city,destination_code,destination_city,departure,arrival,price,total_seats) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',rows)
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback(); raise
+            finally: cur.close()
+
     def generate_network_flights(self, now=None):
         """Add a repeatable network of fictional routes without changing existing flights."""
         now=now or datetime.now()
@@ -236,7 +290,8 @@ class Database:
                             arrival=departure+timedelta(minutes=duration)
                             if arrival<=now: continue
                             price=max(2500,min(140000,round((distance*7+1500)/100)*100))
-                            rows.append((f'TW {1000+i*2+direction}','TripWala Simulated',origin,ocity,dest,dcity,departure,arrival,price,180))
+                            prefix, airline=airline_for_route(origin,dest,i*2+direction)
+                            rows.append((f'{prefix} {1000+i*2+direction}',airline,origin,ocity,dest,dcity,departure,arrival,price,180))
                     if rows: cur.executemany('INSERT INTO flights (flight_number,airline,origin_code,origin_city,destination_code,destination_city,departure,arrival,price,total_seats) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',rows)
                 self.connection.commit()
             except Exception:
@@ -263,6 +318,7 @@ class Database:
         if self._last_schedule_check is None or now - self._last_schedule_check >= timedelta(minutes=1):
             self.generate_flights(now)
             self.generate_network_flights(now)
+            self.generate_bengaluru_chennai(now)
             self._last_schedule_check = now
         if self._last_delay_check is None or now - self._last_delay_check >= timedelta(seconds=30):
             self.simulate_delays()

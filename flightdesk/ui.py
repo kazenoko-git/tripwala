@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QTimer, QDate, QDateTime, QPointF, Signal
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient, QPixmap, QIcon, QPolygonF
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QFrame, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QComboBox, QAbstractItemView, QInputDialog, QScrollArea, QDateEdit, QCheckBox, QProgressBar)
 from mysql.connector import Error
-from .db import Database
+from .db import Database, normalize_city
 from .geo import AIRPORT_COORDINATES, great_circle_point
 
 STYLE = """
@@ -164,6 +164,28 @@ def field(placeholder, secret=False):
     return w
 
 
+AIRLINE_LOGOS = {
+    'indigo':'indigo.svg', 'air india':'air-india.svg', 'air india express':'air-india-express.svg',
+    'emirates':'emirates.svg', 'singapore airlines':'singapore.svg', 'qatar airways':'qatar.svg',
+    'british airways':'british-airways.svg', 'american airlines':'american.svg',
+    'all nippon airways':'ana.svg', 'spicejet':'spicejet.png', 'vistara':'vistara.svg',
+}
+
+
+def airline_logo(name):
+    """Local airline wordmark, with an initials fallback for unknown carriers."""
+    widget=QLabel(); widget.setFixedSize(94,42); widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    path=AIRLINE_LOGOS.get(name.strip().casefold())
+    pixmap=QPixmap(str(Path(__file__).resolve().parent / 'assets' / 'airlines' / path)) if path else QPixmap()
+    if not pixmap.isNull():
+        widget.setPixmap(pixmap.scaled(90,36,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+    else:
+        widget.setText(''.join(word[0] for word in name.split()[:2]).upper() or '✈')
+        widget.setStyleSheet('color:#194a8d; font-size:16px; font-weight:800; background:#e9f1ff; border-radius:8px;')
+    widget.setToolTip(name)
+    return widget
+
+
 def table(headers):
     t = QTableWidget(0, len(headers)); t.setHorizontalHeaderLabels(headers)
     t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -291,7 +313,7 @@ class BookingPage(QWidget):
         count_label=label('Passenger count','subtitle'); count_label.setStyleSheet('color:#788ba0; background:transparent;'); self.form.addWidget(count_label); self.count=QSpinBox(); self.count.setRange(1,9); self.count.valueChanged.connect(self.update_passengers); self.form.addWidget(self.count)
         self.passenger_container=QWidget(); self.passenger_layout=QVBoxLayout(self.passenger_container); self.passenger_layout.setContentsMargins(0,0,0,0); self.form.addWidget(self.passenger_container)
         contact_title=label('Contact details'); contact_title.setStyleSheet('font-size:18px; font-weight:800; color:#1b3151; background:transparent;'); self.form.addWidget(contact_title); self.email=field('Email for this booking'); self.phone=field('Mobile number'); self.form.addWidget(self.email); self.form.addWidget(self.phone)
-        disclaimer=label('Simulation only • No payment will be collected.','subtitle'); disclaimer.setStyleSheet('color:#788ba0; background:transparent;'); self.form.addWidget(disclaimer); self.form.addStretch(); scroll.setWidget(body); content.addWidget(scroll,3)
+        self.form.addStretch(); scroll.setWidget(body); content.addWidget(scroll,3)
         right=QFrame(); right.setObjectName('bookingSummary'); right.setStyleSheet('QFrame#bookingSummary { background:white; border:1px solid #dfe7f1; border-radius:15px; }'); summary=QVBoxLayout(right); summary.setContentsMargins(22,22,22,22)
         title=label('Your flight'); title.setStyleSheet('font-size:19px; font-weight:800; background:transparent;'); summary.addWidget(title)
         self.route=label(''); self.route.setWordWrap(True); self.route.setStyleSheet('background:transparent; font-size:21px; font-weight:800; color:#153869;'); summary.addWidget(self.route)
@@ -327,7 +349,7 @@ class BookingPage(QWidget):
         if any(not name for name in names) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) or not re.fullmatch(r'[+0-9 ()-]{7,25}',phone):
             QMessageBox.warning(self,'Check traveller details','Enter every traveller’s name, a valid email and a phone number.'); return
         f=self.flight; n=len(names)
-        text=f"{f['origin_code']} → {f['destination_code']}  ·  {f['flight_number']}\n{dt(f['departure'])}\n\nTravellers: {', '.join(names)}\nContact: {email}  ·  {phone}\n\nTotal: {money(f['price']*n)}\n\nThis is a simulated booking; no payment is collected. Confirm?"
+        text=f"{f['origin_code']} → {f['destination_code']}  ·  {f['flight_number']}\n{dt(f['departure'])}\n\nTravellers: {', '.join(names)}\nContact: {email}  ·  {phone}\n\nTotal: {money(f['price']*n)}\n\nNo payment will be collected. Confirm this booking?"
         if QMessageBox.question(self,'Review your booking',text) != QMessageBox.StandardButton.Yes: return
         try:
             bid=self.dashboard.db.book(self.dashboard.user['id'],f['id'],n,names,email,phone,f['price'])
@@ -427,7 +449,7 @@ class FlightTracker(QWidget):
         super().__init__(); self.db=db; self.rows=[]; self.snapshot=None
         layout=QVBoxLayout(self); layout.setContentsMargins(28,18,28,18); layout.setSpacing(10)
         header=QHBoxLayout(); title=label('Flight tracker'); title.setStyleSheet('font-size:25px; font-weight:800; color:#102e68;'); header.addWidget(title)
-        tag=label('●  SIMULATION'); tag.setStyleSheet('color:#136c5b; background:#d9f2e7; padding:7px 12px; border-radius:10px; font-size:11px; font-weight:800;'); header.addWidget(tag); header.addStretch()
+        tag=label('●  FLIGHT TRACKER'); tag.setStyleSheet('color:#136c5b; background:#d9f2e7; padding:7px 12px; border-radius:10px; font-size:11px; font-weight:800;'); header.addWidget(tag); header.addStretch()
         self.count=label('','subtitle'); header.addWidget(self.count); layout.addLayout(header)
         search=QHBoxLayout(); self.filter=field('Search flight number, airline or airport'); self.filter.returnPressed.connect(self.refresh); search.addWidget(self.filter,2)
         search.addWidget(button('Find flights',self.refresh)); self.selector=QComboBox(); self.selector.setMinimumWidth(320); self.selector.currentIndexChanged.connect(self.show_selected); search.addWidget(self.selector,3); layout.addLayout(search)
@@ -450,7 +472,7 @@ class FlightTracker(QWidget):
         note=label('Simulated positions based on schedules. Not live GPS.'); note.setWordWrap(True); note.setStyleSheet('color:#8293aa; font-size:11px;'); details.addWidget(note); content.addWidget(panel,1)
 
     def refresh(self):
-        term=self.filter.text().strip(); like='%'+term+'%'
+        term=normalize_city(self.filter.text()); like='%'+term+'%'
         rows=self.db.query("""SELECT * FROM flights WHERE departure >= DATE_SUB(NOW(), INTERVAL 1 DAY)
             AND departure < DATE_ADD(NOW(), INTERVAL 8 DAY)
             AND (flight_number LIKE %s OR airline LIKE %s OR origin_code LIKE %s OR destination_code LIKE %s OR origin_city LIKE %s OR destination_city LIKE %s)
@@ -503,21 +525,12 @@ class Dashboard(QWidget):
         self._flight_snapshot=None; self._booking_snapshot=None; self._flight_rows=[]; self._flight_page=0
         self.stack=QStackedWidget(); self.nav_buttons=[]
         pages = [('Home', self.overview_page()), ('Flights', self.flights_page()), ('My trips' if not self.admin else 'Bookings', self.bookings_page()), ('Tracker', self.tracker_page())]
-        if self.admin:
-            root=QHBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
-            sidebar=QFrame(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(230); nav=QVBoxLayout(sidebar); nav.setContentsMargins(18,30,18,25)
-            brand=Brand(); nav.addWidget(brand); nav.addSpacing(10); nav.addWidget(label('ADMIN CONSOLE')); nav.addSpacing(30)
-            for index, (name,page) in enumerate(pages):
-                b=button('  '+name, lambda checked=False, i=index:self.navigate(i)); b.setCheckable(True); nav.addWidget(b); self.nav_buttons.append(b); self.stack.addWidget(page)
-            nav.addStretch(); nav.addWidget(label(user['name'])); nav.addWidget(button('  Sign out', logout)); root.addWidget(sidebar); root.addWidget(self.stack,1)
-        else:
-            root=QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
-            top=QFrame(); top.setObjectName('topNav'); top.setFixedHeight(76); top.setStyleSheet('QFrame#topNav { background:#102f60; } QFrame#topNav QLabel { background:transparent; color:white; } QFrame#topNav QPushButton { background:transparent; color:#cbddf4; border-radius:0; padding:16px 18px; } QFrame#topNav QPushButton:checked { color:white; border-bottom:3px solid #ff8a38; }')
-            nav=QHBoxLayout(top); nav.setContentsMargins(46,0,46,0); nav.setSpacing(5)
-            brand=Brand(); nav.addWidget(brand); nav.addSpacing(42)
-            for index,(name,page) in enumerate(pages):
-                b=button(name,lambda checked=False,i=index:self.navigate(i)); b.setCheckable(True); nav.addWidget(b); self.nav_buttons.append(b); self.stack.addWidget(page)
-            nav.addStretch(); profile=label('●   '+user['name']); nav.addWidget(profile); nav.addWidget(button('Sign out',logout)); root.addWidget(top); root.addWidget(self.stack,1)
+        root=QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
+        top=QFrame(); top.setObjectName('topNav'); top.setFixedHeight(76); top.setStyleSheet('QFrame#topNav { background:#102f60; } QFrame#topNav QLabel { background:transparent; color:white; } QFrame#topNav QPushButton { background:transparent; color:#cbddf4; border-radius:0; padding:16px 18px; } QFrame#topNav QPushButton:checked { color:white; border-bottom:3px solid #ff8a38; }')
+        nav=QHBoxLayout(top); nav.setContentsMargins(46,0,46,0); nav.setSpacing(5); nav.addWidget(Brand()); nav.addSpacing(42)
+        for index,(name,page) in enumerate(pages):
+            b=button(name,lambda checked=False,i=index:self.navigate(i)); b.setCheckable(True); nav.addWidget(b); self.nav_buttons.append(b); self.stack.addWidget(page)
+        nav.addStretch(); profile=label(('ADMIN  ·  ' if self.admin else '●   ')+user['name']); nav.addWidget(profile); nav.addWidget(button('Sign out',logout)); root.addWidget(top); root.addWidget(self.stack,1)
         self.booking_page=BookingPage(self) if not self.admin else None
         if self.booking_page: self.stack.addWidget(self.booking_page)
         self.navigate(0)
@@ -532,18 +545,16 @@ class Dashboard(QWidget):
 
     def overview_page(self):
         if not self.admin: return self.customer_home()
-        w,l=self.page('Your journey starts here.' if not self.admin else 'A view from the tower.', 'Welcome back, '+self.user['name'].split()[0]+'. Make yourself at home.')
-        hero=SkyPanel(compact=True); h=QVBoxLayout(hero); h.setContentsMargins(34,28,34,28)
-        a=label('YOUR NEXT ADVENTURE  /  01' if not self.admin else 'FLIGHT OPERATIONS  /  01'); a.setStyleSheet('color:#e0eadb; font-size:10px; font-weight:700; background:transparent;'); h.addWidget(a); h.addStretch()
-        b=label('Go somewhere\nthat moves you.' if not self.admin else 'Good journeys\nstart here.','hero'); b.setStyleSheet('font-family: Georgia; font-size: 38px; font-weight:700; color:#fff9ec; background:transparent;'); h.addWidget(b)
-        c=label('A new favourite place is just a flight away.' if not self.admin else 'A little clarity for every journey.'); c.setStyleSheet('color:#eff4e9; background:transparent; font-size:13px;'); h.addWidget(c); l.addWidget(hero)
-        row=QHBoxLayout(); row.setSpacing(14)
-        info=QFrame(); info.setStyleSheet('background:#fffefa; border:1px solid #e1e8df; border-radius:14px;'); il=QVBoxLayout(info); il.setContentsMargins(22,18,22,18)
-        tag=label('YOUR TRIPWALA', 'subtitle'); tag.setStyleSheet('color:#91a296; font-size:10px; font-weight:700; background:transparent; border:0;'); il.addWidget(tag)
-        self.stats=label(''); self.stats.setWordWrap(True); self.stats.setStyleSheet('font-size:16px; font-weight:700; color:#294639; background:transparent; border:0;'); il.addWidget(self.stats); row.addWidget(info,3)
-        action=QFrame(); action.setObjectName('actionCard'); action.setStyleSheet('QFrame#actionCard { background:#e2eadb; border-radius:14px; }'); al=QVBoxLayout(action); al.setContentsMargins(20,16,20,16)
-        al.addWidget(label('READY WHEN YOU ARE', 'subtitle')); al.addWidget(button('Manage flights  →' if self.admin else 'Explore flights  →', lambda:self.navigate(1))); row.addWidget(action,2); l.addLayout(row)
-        note=label('A considered way to get from here to there.'); note.setStyleSheet('color:#96a49a; font-family:Georgia; font-size:15px;'); l.addWidget(note); l.addStretch(); return w
+        w,l=self.page('Welcome back, '+self.user['name'].split()[0]+'!', 'Your flight operations, all in one place.')
+        hero=QFrame(); hero.setObjectName('adminHero'); hero.setMinimumHeight(190); hero.setStyleSheet('QFrame#adminHero { background:#163a83; border-radius:16px; }'); row=QHBoxLayout(hero); row.setContentsMargins(28,0,0,0); row.setSpacing(0)
+        copy=QVBoxLayout(); copy.setContentsMargins(0,22,10,22); kicker=label('TRIPWALA  /  OPERATIONS'); kicker.setStyleSheet('background:transparent; color:#ffc869; font-size:10px; font-weight:800;'); copy.addWidget(kicker)
+        heading=label('Ready for takeoff.'); heading.setStyleSheet('background:transparent; color:white; font-size:31px; font-weight:800;'); copy.addWidget(heading)
+        sub=label('Keep flights, bookings and journeys on track.'); sub.setStyleSheet('background:transparent; color:#d9e7ff; font-size:13px;'); copy.addWidget(sub); row.addLayout(copy,2); row.addWidget(PosterArt(),3); l.addWidget(hero)
+        title=label('Your operations at a glance'); title.setStyleSheet('color:#15376d; font-size:19px; font-weight:800;'); l.addWidget(title)
+        stats=QFrame(); stats.setObjectName('adminStats'); stats.setStyleSheet('QFrame#adminStats { background:#fffdf8; border:1px solid #ecdcc9; border-radius:14px; }'); sl=QVBoxLayout(stats); sl.setContentsMargins(22,20,22,20)
+        t=label('TODAY AT TRIPWALA'); t.setStyleSheet('color:#8a9bb0; font-size:10px; font-weight:800; background:transparent;'); sl.addWidget(t)
+        self.stats=label(''); self.stats.setWordWrap(True); self.stats.setStyleSheet('color:#17365f; font-size:18px; font-weight:800; background:transparent;'); sl.addWidget(self.stats); l.addWidget(stats)
+        choices=QHBoxLayout(); choices.addWidget(button('Manage flights  →',lambda:self.navigate(1))); choices.addWidget(button('View bookings',lambda:self.navigate(2),'secondary')); choices.addWidget(button('Open tracker',lambda:self.navigate(3),'secondary')); l.addLayout(choices); l.addStretch(); return w
 
     def customer_home(self):
         w=QWidget(); w.setStyleSheet('background:#f8f3eb;'); container=QVBoxLayout(w); container.setContentsMargins(0,0,0,0)
@@ -593,7 +604,7 @@ class Dashboard(QWidget):
 
     def flight_card(self,r):
         card=QFrame(); card.setMinimumHeight(164); card.setObjectName('flightCard'); card.setStyleSheet('QFrame#flightCard { background:white; border:1px solid #dbe4f1; border-radius:14px; } QFrame#flightCard QLabel { background:transparent; }'); outer=QVBoxLayout(card); outer.setContentsMargins(22,18,22,16); outer.setSpacing(12)
-        top=QHBoxLayout(); chip=label('✈'); chip.setAlignment(Qt.AlignmentFlag.AlignCenter); chip.setFixedSize(36,36); chip.setStyleSheet('background:#e9f1ff; color:#1461c9; border-radius:10px; font-size:17px; font-weight:800;'); top.addWidget(chip)
+        top=QHBoxLayout(); top.addWidget(airline_logo(r['airline']))
         names=QVBoxLayout(); names.setSpacing(2); title=label(r['airline']); title.setStyleSheet('font-size:15px; font-weight:800; color:#1b3151;'); names.addWidget(title); names.addWidget(label(r['flight_number']+'   •   Economy','subtitle')); top.addLayout(names); top.addStretch()
         status=r['status']+(f" +{r['delay_minutes']} min" if r['delay_minutes'] else '')
         st=label(status.upper()); st.setStyleSheet('color:#1b775f; font-size:10px; font-weight:800;'); top.addWidget(st); outer.addLayout(top)
