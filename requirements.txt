@@ -1,0 +1,2 @@
+PySide6-Essentials>=6.8,<7
+mysql-connector-python>=9.0,<10
