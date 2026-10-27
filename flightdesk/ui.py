@@ -58,6 +58,44 @@ class SkyPanel(QFrame):
 
 
 
+class TravelArtwork(QFrame):
+    """Small vector illustrations painted locally; no image downloads needed."""
+    def __init__(self, scene, parent=None):
+        super().__init__(parent); self.scene=scene
+        if scene != 'login': self.setFixedHeight(116)
+    def paintEvent(self,event):
+        p=QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w=self.width(); h=self.height()
+        if self.scene=='login':
+            p.fillRect(self.rect(),QColor('#102f60'))
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor('#173d75')); p.drawEllipse(int(w*.49),int(h*.05),int(w*.78),int(w*.78))
+            p.setBrush(QColor('#204b85')); p.drawEllipse(int(w*.70),int(h*.18),int(w*.40),int(w*.40))
+            pen=QPen(QColor(185,211,247,130),2,Qt.PenStyle.DashLine); p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
+            route=QPainterPath(); route.moveTo(w*.54,h*.18); route.cubicTo(w*.83,h*.05,w*.50,h*.42,w*.91,h*.35); p.drawPath(route)
+            p.setPen(QColor('#ff9b4a')); p.setFont(QFont('Arial',25)); p.drawText(int(w*.86),int(h*.35),'✈')
+            p.setPen(QColor(195,216,245,150)); p.setFont(QFont('Arial',10)); p.drawText(int(w*.67),int(h*.16),'DEL'); p.drawText(int(w*.84),int(h*.40),'BOM')
+        else:
+            colors={'BOM':('#b9def5','#eaf6ff','#5e96c6'), 'HYD':('#dcdcf7','#f4efff','#8b84bd'), 'COK':('#c8e9e5','#f2faf2','#60a99d')}
+            sky,light,land=colors[self.scene]; p.fillRect(self.rect(),QColor(sky)); p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(light)); p.drawEllipse(int(w*.72),-24,85,85)
+            p.setBrush(QColor(255,255,255,115)); p.drawEllipse(int(w*.12),22,45,12); p.drawEllipse(int(w*.18),15,53,19); p.drawEllipse(int(w*.61),20,56,12)
+            p.setBrush(QColor(land))
+            if self.scene=='BOM':
+                for x,height,width in [(0,35,25),(.11,50,26),(.24,41,30),(.37,65,24),(.49,42,28),(.62,55,28),(.76,39,28),(.89,62,30)]:
+                    p.drawRect(int(w*x),h-height,width,height)
+            elif self.scene=='HYD':
+                p.drawRect(0,h-23,w,23); p.drawRect(int(w*.38),h-59,int(w*.24),42)
+                for x in (.37,.58): p.drawRect(int(w*x),h-77,8,55); p.drawEllipse(int(w*x)-3,h-83,14,10)
+                p.drawEllipse(int(w*.44),h-73,int(w*.12),30)
+            else:
+                p.drawRect(0,h-24,w,24)
+                pen=QPen(QColor(land),5); p.setPen(pen); p.drawLine(int(w*.74),h-20,int(w*.79),h-78)
+                p.setPen(Qt.PenStyle.NoPen)
+                for x,y in [(.69,.30),(.74,.24),(.79,.20),(.84,.24),(.88,.29)]: p.drawEllipse(int(w*x),int(h*y),int(w*.12),10)
+            p.setPen(QColor('#284b70')); p.setFont(QFont('Arial',16,QFont.Weight.Bold)); p.drawText(16,26,self.scene+'   →')
+        p.end()
+
+
 def paint_mark(p, x, y, size):
     """A curved route ending in a north-east arrow."""
     p.save(); p.translate(x,y); p.scale(size/40,size/40)
@@ -152,7 +190,7 @@ class Auth(QWidget):
     def __init__(self, db, on_login):
         super().__init__(); self.db = db; self.on_login = on_login; self.registering = False
         outer = QHBoxLayout(self); outer.setContentsMargins(0,0,0,0)
-        left = QFrame(); left.setObjectName('authHero'); left.setStyleSheet('QFrame#authHero { background:#102f60; }'); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(65,58,65,58)
+        left = TravelArtwork('login'); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(65,58,65,58)
         left_layout.addWidget(Brand()); left_layout.addStretch()
         kicker=label('YOUR FLIGHT BOOKING COMPANION'); kicker.setStyleSheet('color:#97bce8; font-size:11px; font-weight:800; background:transparent;'); left_layout.addWidget(kicker)
         headline=label('Your next trip\nstarts here.'); headline.setStyleSheet('font-size:48px; font-weight:800; color:white; background:transparent;'); left_layout.addWidget(headline)
@@ -329,7 +367,7 @@ class Dashboard(QWidget):
         routes=QHBoxLayout(); routes.setSpacing(14)
         for origin,dest,caption,subtitle,color in [('DEL','BOM','New Delhi to Mumbai','The city that never slows down','#d7e9fa'),('BLR','HYD','Bengaluru to Hyderabad','Food, culture and city lights','#e3e1f6'),('GOI','COK','Goa to Kochi','Your coastal escape awaits','#e1f2ec')]:
             card=QFrame(); card.setObjectName('popular'); card.setStyleSheet('QFrame#popular { background:white; border:1px solid #dce5f0; border-radius:14px; }'); c=QVBoxLayout(card); c.setContentsMargins(0,0,0,12); c.setSpacing(5)
-            art=QFrame(); art.setFixedHeight(70); art.setStyleSheet('background:'+color+'; border-radius:12px;'); av=QHBoxLayout(art); city=label(dest); city.setStyleSheet('background:transparent; color:#335779; font-size:31px; font-weight:800;'); av.addWidget(city); av.addStretch(); plane=label('✈'); plane.setStyleSheet('background:transparent; color:#648ab1; font-size:28px;'); av.addWidget(plane); c.addWidget(art)
+            art=TravelArtwork(dest); c.addWidget(art)
             text=label(caption); text.setStyleSheet('background:transparent; color:#1b3151; font-size:15px; font-weight:800; padding:4px 14px;'); c.addWidget(text)
             description=label(subtitle); description.setStyleSheet('background:transparent; color:#8796aa; padding:0 14px;'); c.addWidget(description)
             go=button('View flights  →',lambda checked=False,o=origin,d=dest:self.route_search(o,d),'secondary'); go.setStyleSheet('background:transparent; color:#1765cf; text-align:left; padding:8px 14px;'); c.addWidget(go); routes.addWidget(card)
