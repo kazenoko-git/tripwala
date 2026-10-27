@@ -14,7 +14,7 @@ Screenshots show illustrative sample data.
 
 - Register and sign in as a traveller; passwords are salted and hashed.
 - Search flights by origin, destination and optional departure date, enter traveller and contact details, review the fare, book seats, see bookings and cancel future bookings.
-- Track simulated flights by flight number, airline, city or airport. Progress is estimated from scheduled times and delays; it is not live GPS.
+- Track simulated flights on an offline world map by flight number, airline, city or airport. The aircraft position is an illustrative interpolation based on scheduled times and delays, not live GPS. Map coordinates are included for the eight seeded airports; other admin-created airports show status and timing without a map position.
 - Sign in as an administrator to add flights, set delays, cancel flights and view all bookings.
 - A local timer updates flight statuses every 2 seconds while the app is open. Flight times advance with the real clock; reopening the app catches statuses up.
 - The simulator maintains seven calendar days of fictional flights and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.
@@ -65,3 +65,5 @@ Bookings are inserted in a transaction that locks the flight record and checks a
 - **Access denied:** check the MySQL username, password and database creation privileges.
 - **No flights:** clear the search or add flights through the admin account; seed flights eventually move into the past.
 - **Dependencies fail to install:** use a Python version supported by current PySide6 wheels, such as Python 3.12 or 3.13.
+
+The offline world map uses [Natural Earth 1:110m land data](https://www.naturalearthdata.com/about/terms-of-use/), which is public domain.
