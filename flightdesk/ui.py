@@ -1,5 +1,7 @@
 """Native Qt interface for FlightDesk."""
 from datetime import datetime
+from pathlib import Path
+import json
 import re
 
 from PySide6.QtCore import Qt, QTimer, QDate, QDateTime
@@ -150,15 +152,16 @@ class Auth(QWidget):
     def __init__(self, db, on_login):
         super().__init__(); self.db = db; self.on_login = on_login; self.registering = False
         outer = QHBoxLayout(self); outer.setContentsMargins(0,0,0,0)
-        left = SkyPanel(); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(65,58,65,58)
-        brand = Brand()
-        left_layout.addWidget(brand); left_layout.addStretch()
-        kicker=label('A LITTLE MORE SKY  /  A LITTLE LESS STRESS'); kicker.setStyleSheet('color:#e0eadb; font-size:10px; font-weight:700; background:transparent;'); left_layout.addWidget(kicker)
-        headline=label('Somewhere\nwonderful\nawaits.', 'hero'); headline.setStyleSheet('font-family: Georgia; font-size: 57px; font-weight: 700; color: #fff9ec; background: transparent;'); left_layout.addWidget(headline)
-        caption = label('The journey starts long before takeoff.'); caption.setStyleSheet('color: #eef3e8; font-size: 15px; background: transparent;'); left_layout.addWidget(caption); left_layout.addStretch()
-        foot=label('YOUR JOURNEY STARTS HERE'); foot.setStyleSheet('color:#e4ecdc; font-size:10px; font-weight:700; background:transparent;'); left_layout.addWidget(foot); outer.addWidget(left, 5)
+        left = QFrame(); left.setObjectName('authHero'); left.setStyleSheet('QFrame#authHero { background:#102f60; }'); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(65,58,65,58)
+        left_layout.addWidget(Brand()); left_layout.addStretch()
+        kicker=label('YOUR FLIGHT BOOKING COMPANION'); kicker.setStyleSheet('color:#97bce8; font-size:11px; font-weight:800; background:transparent;'); left_layout.addWidget(kicker)
+        headline=label('Your next trip\nstarts here.'); headline.setStyleSheet('font-size:48px; font-weight:800; color:white; background:transparent;'); left_layout.addWidget(headline)
+        caption=label('Search flights, plan your journey and keep\neverything in one place.'); caption.setStyleSheet('color:#c8daf0; font-size:16px; background:transparent;'); left_layout.addWidget(caption); left_layout.addSpacing(35)
+        for text in ('✈   Explore flights across India', '✓   Keep track of your bookings', '◷   Stay updated on flight status'):
+            feature=label(text); feature.setStyleSheet('color:#e7effa; font-size:14px; padding:9px 0; background:transparent;'); left_layout.addWidget(feature)
+        left_layout.addStretch(); foot=label('MADE FOR EVERY JOURNEY'); foot.setStyleSheet('color:#8dafd7; font-size:10px; font-weight:700; background:transparent;'); left_layout.addWidget(foot); outer.addWidget(left,5)
         right = QWidget(); right_layout = QVBoxLayout(right); right_layout.setContentsMargins(75,50,75,50); right_layout.addStretch()
-        eyebrow=label('YOUR NEXT CHAPTER', 'subtitle'); eyebrow.setStyleSheet('color:#799481; font-size:10px; font-weight:800;'); right_layout.addWidget(eyebrow)
+        eyebrow=label('WELCOME TO TRIPWALA', 'subtitle'); eyebrow.setStyleSheet('color:#5d83b5; font-size:10px; font-weight:800;'); right_layout.addWidget(eyebrow)
         self.heading = label('Welcome back', 'title'); right_layout.addWidget(self.heading)
         self.intro = label('Sign in to manage your journeys.', 'subtitle'); right_layout.addWidget(self.intro); right_layout.addSpacing(24)
         self.name = field('Full name'); self.name.hide(); self.email = field('Email address'); self.password = field('Password', True)
@@ -211,6 +214,64 @@ class FlightDialog(QDialog):
         self.values = (vals['number'].upper(), vals['airline'], vals['oc'].upper(), vals['ocity'], vals['dc'].upper(), vals['dcity'], self.departure.dateTime().toPython(), self.arrival.dateTime().toPython(), self.price.value(), self.seats.value()); self.accept()
 
 
+class BookingPage(QWidget):
+    """Traveller details and explicit fare review before a simulated reservation."""
+    def __init__(self, dashboard):
+        super().__init__(); self.dashboard=dashboard; self.flight=None; self.names=[]
+        outer=QVBoxLayout(self); outer.setContentsMargins(42,25,42,25); outer.setSpacing(12)
+        top=QHBoxLayout(); top.addWidget(button('← Back to flights',lambda:dashboard.navigate(1),'secondary')); top.addStretch(); top.addWidget(label('FLIGHT  →  TRAVELLERS  →  REVIEW','subtitle')); outer.addLayout(top)
+        outer.addWidget(label('Complete your booking','title')); outer.addWidget(label('Enter traveller details, then review before confirming.','subtitle'))
+        content=QHBoxLayout(); content.setSpacing(18); outer.addLayout(content,1)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); body=QWidget(); self.form=QVBoxLayout(body); self.form.setContentsMargins(2,2,2,2); self.form.setSpacing(12)
+        section=label('Traveller details'); section.setStyleSheet('font-size:18px; font-weight:800;'); self.form.addWidget(section)
+        self.form.addWidget(label('Passenger count','subtitle')); self.count=QSpinBox(); self.count.setRange(1,9); self.count.valueChanged.connect(self.update_passengers); self.form.addWidget(self.count)
+        self.passenger_container=QWidget(); self.passenger_layout=QVBoxLayout(self.passenger_container); self.passenger_layout.setContentsMargins(0,0,0,0); self.form.addWidget(self.passenger_container)
+        self.form.addWidget(label('Contact details','title')); self.email=field('Email for this booking'); self.phone=field('Mobile number'); self.form.addWidget(self.email); self.form.addWidget(self.phone)
+        self.form.addWidget(label('Simulation only • No payment will be collected.','subtitle')); self.form.addStretch(); scroll.setWidget(body); content.addWidget(scroll,3)
+        right=QFrame(); right.setObjectName('bookingSummary'); right.setStyleSheet('QFrame#bookingSummary { background:white; border:1px solid #dfe7f1; border-radius:15px; }'); summary=QVBoxLayout(right); summary.setContentsMargins(22,22,22,22)
+        title=label('Your flight'); title.setStyleSheet('font-size:19px; font-weight:800; background:transparent;'); summary.addWidget(title)
+        self.route=label(''); self.route.setWordWrap(True); self.route.setStyleSheet('background:transparent; font-size:21px; font-weight:800; color:#153869;'); summary.addWidget(self.route)
+        self.details=label(''); self.details.setWordWrap(True); self.details.setStyleSheet('background:transparent; color:#708198; line-height:1.5;'); summary.addWidget(self.details); summary.addSpacing(16)
+        self.fare=label(''); self.fare.setWordWrap(True); self.fare.setStyleSheet('background:transparent; color:#213c61; font-size:16px; font-weight:700;'); summary.addWidget(self.fare); summary.addStretch()
+        self.review=button('Review booking  →', self.review_booking); summary.addWidget(self.review); content.addWidget(right,2)
+        self.update_passengers()
+
+    def open_flight(self,flight):
+        self.flight=flight; self.count.setValue(1); self.update_passengers(); self.names[0].setText(self.dashboard.user['name']); self.email.setText(self.dashboard.user['email']); self.phone.clear()
+        self.route.setText(f"{flight['origin_code']}  →  {flight['destination_code']}")
+        self.details.setText(f"{flight['airline']}  ·  {flight['flight_number']}\n{dt(flight['departure'])}  →  {dt(flight['arrival'])}\nStatus: {flight['status']}")
+        self.update_fare()
+
+    def update_passengers(self):
+        existing=[w.text() for w in self.names]
+        while self.passenger_layout.count():
+            item=self.passenger_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        self.names=[]
+        for i in range(self.count.value()):
+            name=field(f'Traveller {i+1} · full name'); name.setMaxLength(100)
+            if i < len(existing): name.setText(existing[i])
+            self.names.append(name); self.passenger_layout.addWidget(name)
+        self.update_fare()
+
+    def update_fare(self):
+        if self.flight:
+            n=self.count.value(); self.fare.setText(f"{money(self.flight['price'])} × {n} traveller{'s' if n!=1 else ''}\n\nTotal  {money(self.flight['price']*n)}")
+
+    def review_booking(self):
+        names=[w.text().strip() for w in self.names]; email=self.email.text().strip(); phone=self.phone.text().strip()
+        if any(not name for name in names) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) or not re.fullmatch(r'[+0-9 ()-]{7,25}',phone):
+            QMessageBox.warning(self,'Check traveller details','Enter every traveller’s name, a valid email and a phone number.'); return
+        f=self.flight; n=len(names)
+        text=f"{f['origin_code']} → {f['destination_code']}  ·  {f['flight_number']}\n{dt(f['departure'])}\n\nTravellers: {', '.join(names)}\nContact: {email}  ·  {phone}\n\nTotal: {money(f['price']*n)}\n\nThis is a simulated booking; no payment is collected. Confirm?"
+        if QMessageBox.question(self,'Review your booking',text) != QMessageBox.StandardButton.Yes: return
+        try:
+            bid=self.dashboard.db.book(self.dashboard.user['id'],f['id'],n,names,email,phone,f['price'])
+            QMessageBox.information(self,'Booking confirmed',f'Booking FD-{bid:05} is confirmed. Find it under My trips.')
+            self.dashboard._flight_snapshot=None; self.dashboard._booking_snapshot=None; self.dashboard.navigate(2)
+        except (Error, ValueError) as exc: QMessageBox.warning(self,'Could not book flight',str(exc))
+
+
 class Dashboard(QWidget):
     def __init__(self, db, user, logout):
         super().__init__(); self.db=db; self.user=user; self.logout=logout; self.admin=user['role']=='admin'
@@ -232,6 +293,8 @@ class Dashboard(QWidget):
             for index,(name,page) in enumerate(pages):
                 b=button(name,lambda checked=False,i=index:self.navigate(i)); b.setCheckable(True); nav.addWidget(b); self.nav_buttons.append(b); self.stack.addWidget(page)
             nav.addStretch(); profile=label('●   '+user['name']); nav.addWidget(profile); nav.addWidget(button('Sign out',logout)); root.addWidget(top); root.addWidget(self.stack,1)
+        self.booking_page=BookingPage(self) if not self.admin else None
+        if self.booking_page: self.stack.addWidget(self.booking_page)
         self.navigate(0)
 
     def page(self, title, subtitle):
@@ -322,7 +385,7 @@ class Dashboard(QWidget):
     def tick(self):
         try:
             self.db.simulate()
-            [self.refresh_stats,self.refresh_flights,self.refresh_bookings][self.stack.currentIndex()]()
+            if self.stack.currentIndex() < 3: [self.refresh_stats,self.refresh_flights,self.refresh_bookings][self.stack.currentIndex()]()
         except Error: pass
 
     def refresh_stats(self):
@@ -366,12 +429,12 @@ class Dashboard(QWidget):
                 if self.booking_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.booking_table.selectRow(index); break
 
     def book_flight(self, fid=None):
-        if fid is None and self.admin: fid=selected_id(self.flight_table)
-        if fid is None: QMessageBox.information(self,'Select a flight','Choose a flight first.'); return
-        seats,ok=QInputDialog.getInt(self,'Book flight','Number of passengers:',1,1,9)
-        if not ok: return
+        if fid is None: return
         def action():
-            bid=self.db.book(self.user['id'],fid,seats); QMessageBox.information(self,'You are booked!',f'Booking FD-{bid:05} is confirmed.\nFind it under My trips.'); self.refresh_flights()
+            rows=self.db.query('SELECT * FROM flights WHERE id=%s', (fid,))
+            if not rows: raise ValueError('This flight is no longer available.')
+            self.booking_page.open_flight(rows[0]); self.stack.setCurrentWidget(self.booking_page)
+            for b in self.nav_buttons: b.setChecked(False)
         self.safe(action)
 
     def cancel_booking(self):
@@ -415,6 +478,19 @@ class MainWindow(QMainWindow):
 def run():
     import sys
     app=QApplication(sys.argv); app.setApplicationName('TripWala'); app.setWindowIcon(brand_icon()); app.setStyle('Fusion'); app.setStyleSheet(STYLE)
-    setup=SetupDialog()
-    if not setup.exec(): return
-    window=MainWindow(setup.db); window.show(); sys.exit(app.exec())
+    db = None
+    config_path = Path(__file__).resolve().parent.parent / 'mysql.local.json'
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text(encoding='utf-8'))
+            db = Database(config['host'], config['port'], config['user'], config['password'])
+            db.connect(); db.simulate()
+        except (Error, OSError, ValueError, TypeError, KeyError) as exc:
+            if db and db.connection: db.connection.close()
+            db = None
+            QMessageBox.warning(None, 'Automatic connection failed', f'Could not connect using mysql.local.json. Enter your MySQL details instead.\n\n{exc}')
+    if db is None:
+        setup=SetupDialog()
+        if not setup.exec(): return
+        db = setup.db
+    window=MainWindow(db); window.show(); sys.exit(app.exec())

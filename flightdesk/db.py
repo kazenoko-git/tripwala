@@ -127,7 +127,7 @@ class Database:
         sql += ' GROUP BY f.id ORDER BY f.departure LIMIT 200'
         return self.query(sql, tuple(params))
 
-    def book(self, user_id, flight_id, seats):
+    def book(self, user_id, flight_id, seats, passengers=None, contact_email=None, contact_phone=None, expected_price=None):
         cur = self.cursor()
         try:
             self.connection.start_transaction()
@@ -135,12 +135,19 @@ class Database:
             flight = cur.fetchone()
             if not flight or flight['status'] in ('Cancelled','Departed','Arrived') or flight['departure'] <= datetime.now():
                 raise ValueError('This flight is no longer available for booking.')
+            if expected_price is not None and flight['price'] != expected_price:
+                raise ValueError('The fare has changed. Return to the flight list and review it again.')
             cur.execute("SELECT COALESCE(SUM(seats),0) AS booked FROM bookings WHERE flight_id=%s AND status='Confirmed'", (flight_id,))
             available = flight['total_seats'] - cur.fetchone()['booked']
             if seats < 1 or seats > available:
                 raise ValueError(f'Only {available} seat(s) available.')
             cur.execute('INSERT INTO bookings (user_id,flight_id,seats,total_price,status) VALUES (%s,%s,%s,%s,%s)', (user_id, flight_id, seats, flight['price'] * seats, 'Confirmed'))
             booking_id = cur.lastrowid
+            if passengers is not None:
+                if len(passengers) != seats or any(not name.strip() for name in passengers):
+                    raise ValueError('Enter the name of every traveller.')
+                cur.executemany('INSERT INTO booking_passengers (booking_id, full_name) VALUES (%s,%s)', [(booking_id, name.strip()) for name in passengers])
+                cur.execute('INSERT INTO booking_contacts (booking_id, email, phone) VALUES (%s,%s,%s)', (booking_id, contact_email, contact_phone))
             self.connection.commit()
             return booking_id
         except Exception:
@@ -226,5 +233,7 @@ class Database:
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS users (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, email VARCHAR(190) NOT NULL UNIQUE, password_hash VARCHAR(150) NOT NULL, role ENUM('admin','customer') NOT NULL DEFAULT 'customer', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB""",
     """CREATE TABLE IF NOT EXISTS flights (id INT AUTO_INCREMENT PRIMARY KEY, flight_number VARCHAR(20) NOT NULL, airline VARCHAR(80) NOT NULL, origin_code CHAR(3) NOT NULL, origin_city VARCHAR(80) NOT NULL, destination_code CHAR(3) NOT NULL, destination_city VARCHAR(80) NOT NULL, departure DATETIME NOT NULL, arrival DATETIME NOT NULL, price DECIMAL(10,2) NOT NULL, total_seats INT NOT NULL, status ENUM('Scheduled','Boarding','Delayed','Departed','Arrived','Cancelled') NOT NULL DEFAULT 'Scheduled', delay_minutes INT NOT NULL DEFAULT 0, INDEX (departure)) ENGINE=InnoDB""",
-    """CREATE TABLE IF NOT EXISTS bookings (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, flight_id INT NOT NULL, seats INT NOT NULL, total_price DECIMAL(10,2) NOT NULL, status ENUM('Confirmed','Cancelled') NOT NULL DEFAULT 'Confirmed', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (flight_id) REFERENCES flights(id), INDEX (flight_id,status)) ENGINE=InnoDB"""
+    """CREATE TABLE IF NOT EXISTS bookings (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, flight_id INT NOT NULL, seats INT NOT NULL, total_price DECIMAL(10,2) NOT NULL, status ENUM('Confirmed','Cancelled') NOT NULL DEFAULT 'Confirmed', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (flight_id) REFERENCES flights(id), INDEX (flight_id,status)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS booking_passengers (id INT AUTO_INCREMENT PRIMARY KEY, booking_id INT NOT NULL, full_name VARCHAR(100) NOT NULL, FOREIGN KEY (booking_id) REFERENCES bookings(id)) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS booking_contacts (booking_id INT PRIMARY KEY, email VARCHAR(190) NOT NULL, phone VARCHAR(25) NOT NULL, FOREIGN KEY (booking_id) REFERENCES bookings(id)) ENGINE=InnoDB"""
 ]

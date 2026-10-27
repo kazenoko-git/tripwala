@@ -13,7 +13,7 @@ Screenshots show illustrative sample data.
 ## What it does
 
 - Register and sign in as a traveller; passwords are salted and hashed.
-- Search flights by origin, destination and optional departure date, book seats, see bookings and cancel future bookings.
+- Search flights by origin, destination and optional departure date, enter traveller and contact details, review the fare, book seats, see bookings and cancel future bookings.
 - Sign in as an administrator to add flights, set delays, cancel flights and view all bookings.
 - A local timer updates flight statuses every 2 seconds while the app is open. Flight times advance with the real clock; reopening the app catches statuses up.
 - The simulator maintains seven calendar days of fictional flights and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.
@@ -40,7 +40,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Enter your local MySQL host (`localhost`), port (`3306`), username and password in the connection window. No credentials are saved by the application. The app creates `flight_management` and its tables on first connection. If your MySQL account cannot create databases, ask the MySQL administrator to grant the required permissions.
+Enter your local MySQL host (`localhost`), port (`3306`), username and password in the connection window. The connection dialog does not save credentials. For automatic local connection, create a `mysql.local.json` file in the project folder with `host`, `port`, `user` and `password` fields. This optional file is ignored by Git and stores the password as plaintext; restrict access to it and do not share it. The app creates `flight_management` and its tables on first connection. If your MySQL account cannot create databases, ask the MySQL administrator to grant the required permissions.
 
 First-run administrator login:
 
@@ -53,6 +53,7 @@ These are demonstration credentials. The application currently has no password-c
 
 - `users`: login details and role.
 - `flights`: route, schedule, seat capacity, price, delay and status.
+- `booking_passengers` and `booking_contacts`: traveller names and contact details linked to a booking.
 - `bookings`: passenger reservations, with `user_id` referencing `users(id)` and `flight_id` referencing `flights(id)` through foreign keys.
 
 Bookings are inserted in a transaction that locks the flight record and checks available seats. Cancelling a booking keeps its history and releases its seats. Cancelling a flight retains reservations and shows the flight's cancelled status alongside them. No real payments, ticket issuance or live flight data are involved.
