@@ -14,6 +14,7 @@ Screenshots show illustrative sample data.
 
 - Register and sign in as a traveller; passwords are salted and hashed.
 - Search flights by origin, destination and optional departure date, enter traveller and contact details, review the fare, book seats, see bookings and cancel future bookings.
+- Track simulated flights by flight number, airline, city or airport. Progress is estimated from scheduled times and delays; it is not live GPS.
 - Sign in as an administrator to add flights, set delays, cancel flights and view all bookings.
 - A local timer updates flight statuses every 2 seconds while the app is open. Flight times advance with the real clock; reopening the app catches statuses up.
 - The simulator maintains seven calendar days of fictional flights and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.

@@ -1,31 +1,31 @@
 """Native Qt interface for FlightDesk."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import json
 import re
 
 from PySide6.QtCore import Qt, QTimer, QDate, QDateTime
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QBrush, QPainterPath, QLinearGradient, QPixmap, QIcon
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QFrame, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QComboBox, QAbstractItemView, QInputDialog, QScrollArea, QDateEdit, QCheckBox)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QFrame, QMessageBox, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QFormLayout, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QComboBox, QAbstractItemView, QInputDialog, QScrollArea, QDateEdit, QCheckBox, QProgressBar)
 from mysql.connector import Error
 from .db import Database
 
 STYLE = """
-QWidget { background: #f2f5fa; color: #17243c; font-family: "Helvetica Neue", "Arial"; font-size: 13px; }
+QWidget { background: #f8f3eb; color: #17243c; font-family: "Helvetica Neue", "Arial"; font-size: 13px; }
 QMainWindow { background: #f4f2ec; }
 QFrame#sidebar { background: #102443; border: none; }
 QFrame#sidebar QLabel { background: transparent; color: #f5f1e8; }
 QFrame#sidebar QPushButton { background: transparent; color: #abbeb6; border: none; text-align: left; padding: 15px 16px; border-radius: 9px; font-weight: 600; }
 QFrame#sidebar QPushButton:hover, QFrame#sidebar QPushButton:checked { background: #234d7b; color: #fffdf2; }
-QLabel#title { font-size: 31px; font-weight: 700; color: #20302d; }
+QLabel#title { font-size: 31px; font-weight: 800; color: #102e68; }
 QLabel#subtitle, QLabel#muted { color: #798981; font-size: 13px; }
 QLabel#hero { font-size: 42px; font-weight: 700; color: #fff9e9; background: transparent; }
 QLineEdit, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QComboBox { background: #fffefa; border: 1px solid #d8e1d9; border-radius: 9px; padding: 12px; min-height: 20px; selection-background-color: #416c5b; }
 QLineEdit:focus, QSpinBox:focus, QDateTimeEdit:focus { border: 1px solid #527c6a; }
 QPushButton { background: #1264d5; color: #fffdf3; border: none; border-radius: 9px; padding: 13px 19px; font-weight: 700; }
 QPushButton:hover { background: #0c50af; }
-QPushButton#secondary { background: #e4ebe2; color: #355b49; }
-QPushButton#secondary:hover { background: #d5e2d4; }
+QPushButton#secondary { background: #e6edff; color: #1d4f9c; }
+QPushButton#secondary:hover { background: #d3e1ff; }
 QPushButton#danger { background: #f7e9e3; color: #a04b38; }
 QTableWidget { background: #fffefa; border: 1px solid #e0e6dd; border-radius: 14px; gridline-color: #edf0eb; alternate-background-color: #f8faf5; selection-background-color: #dcebe0; selection-color: #20302d; }
 QHeaderView::section { background: #edf2eb; color: #73867b; border: none; border-bottom: 1px solid #e0e8dd; padding: 14px 7px; font-weight: 700; }
@@ -75,7 +75,7 @@ class TravelArtwork(QFrame):
             p.setPen(QColor('#ff9b4a')); p.setFont(QFont('Arial',25)); p.drawText(int(w*.86),int(h*.35),'✈')
             p.setPen(QColor(195,216,245,150)); p.setFont(QFont('Arial',10)); p.drawText(int(w*.67),int(h*.16),'DEL'); p.drawText(int(w*.84),int(h*.40),'BOM')
         else:
-            colors={'BOM':('#b9def5','#eaf6ff','#5e96c6'), 'HYD':('#dcdcf7','#f4efff','#8b84bd'), 'COK':('#c8e9e5','#f2faf2','#60a99d')}
+            colors={'BOM':('#f6a540','#ffdf95','#234f9f'), 'HYD':('#ef7771','#ffd6b8','#683d96'), 'COK':('#76c7b4','#f8de93','#147569')}
             sky,light,land=colors[self.scene]; p.fillRect(self.rect(),QColor(sky)); p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(light)); p.drawEllipse(int(w*.72),-24,85,85)
             p.setBrush(QColor(255,255,255,115)); p.drawEllipse(int(w*.12),22,45,12); p.drawEllipse(int(w*.18),15,53,19); p.drawEllipse(int(w*.61),20,56,12)
@@ -94,6 +94,33 @@ class TravelArtwork(QFrame):
                 for x,y in [(.69,.30),(.74,.24),(.79,.20),(.84,.24),(.88,.29)]: p.drawEllipse(int(w*x),int(h*y),int(w*.12),10)
             p.setPen(QColor('#284b70')); p.setFont(QFont('Arial',16,QFont.Weight.Bold)); p.drawText(16,26,self.scene+'   →')
         p.end()
+
+
+class PosterArt(QWidget):
+    """Original travel-poster artwork, loaded from the bundled local asset."""
+    def __init__(self):
+        super().__init__(); self.setMinimumSize(200,160)
+        self.poster=QPixmap(str(Path(__file__).resolve().parent / 'assets' / 'india-travel-poster.png'))
+    def paintEvent(self,event):
+        p=QPainter(self); p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if not self.poster.isNull():
+            scaled=self.poster.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap((self.width()-scaled.width())//2,(self.height()-scaled.height())//2,scaled)
+        else: p.fillRect(self.rect(),QColor('#f6b642'))
+        p.end()
+
+
+class LoginArtwork(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.poster=QPixmap(str(Path(__file__).resolve().parent / 'assets' / 'india-travel-poster.png'))
+    def paintEvent(self,event):
+        painter=QPainter(self); painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if not self.poster.isNull():
+            scaled=self.poster.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap((self.width()-scaled.width())//2,(self.height()-scaled.height())//2,scaled)
+        else: painter.fillRect(self.rect(),QColor('#163a83'))
+        overlay=QLinearGradient(0,0,0,self.height()); overlay.setColorAt(0,QColor(8,30,70,205)); overlay.setColorAt(.5,QColor(8,30,70,100)); overlay.setColorAt(1,QColor(8,30,70,210)); painter.fillRect(self.rect(),overlay); painter.end()
 
 
 def paint_mark(p, x, y, size):
@@ -190,23 +217,21 @@ class Auth(QWidget):
     def __init__(self, db, on_login):
         super().__init__(); self.db = db; self.on_login = on_login; self.registering = False
         outer = QHBoxLayout(self); outer.setContentsMargins(0,0,0,0)
-        left = TravelArtwork('login'); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(65,58,65,58)
+        left = LoginArtwork(); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(56,42,56,42); left_layout.setSpacing(10)
         left_layout.addWidget(Brand()); left_layout.addStretch()
-        kicker=label('YOUR FLIGHT BOOKING COMPANION'); kicker.setStyleSheet('color:#97bce8; font-size:11px; font-weight:800; background:transparent;'); left_layout.addWidget(kicker)
-        headline=label('Your next trip\nstarts here.'); headline.setStyleSheet('font-size:48px; font-weight:800; color:white; background:transparent;'); left_layout.addWidget(headline)
-        caption=label('Search flights, plan your journey and keep\neverything in one place.'); caption.setStyleSheet('color:#c8daf0; font-size:16px; background:transparent;'); left_layout.addWidget(caption); left_layout.addSpacing(35)
-        for text in ('✈   Explore flights across India', '✓   Keep track of your bookings', '◷   Stay updated on flight status'):
-            feature=label(text); feature.setStyleSheet('color:#e7effa; font-size:14px; padding:9px 0; background:transparent;'); left_layout.addWidget(feature)
-        left_layout.addStretch(); foot=label('MADE FOR EVERY JOURNEY'); foot.setStyleSheet('color:#8dafd7; font-size:10px; font-weight:700; background:transparent;'); left_layout.addWidget(foot); outer.addWidget(left,5)
-        right = QWidget(); right_layout = QVBoxLayout(right); right_layout.setContentsMargins(75,50,75,50); right_layout.addStretch()
+        kicker=label('TRIPS, STORIES & A LITTLE BIT OF MAGIC'); kicker.setStyleSheet('color:#ffd080; font-size:10px; font-weight:800; background:transparent;'); left_layout.addWidget(kicker)
+        headline=label('Chalo, let’s\nget going!'); headline.setStyleSheet('font-size:46px; font-weight:800; color:#fffaf0; background:transparent;'); left_layout.addWidget(headline)
+        caption=label('From the first search to the final boarding call.\nYour next journey starts with TripWala.'); caption.setStyleSheet('color:#edf3ff; font-size:14px; background:transparent;'); left_layout.addWidget(caption); left_layout.addStretch()
+        foot=label('MADE FOR THE WAY INDIA TRAVELS    ✦'); foot.setStyleSheet('color:#e0ebff; font-size:10px; font-weight:800; background:transparent;'); left_layout.addWidget(foot); outer.addWidget(left,5)
+        right = QWidget(); right.setStyleSheet('background:#f8f3eb;'); right_layout = QVBoxLayout(right); right_layout.setContentsMargins(75,50,75,50); right_layout.addStretch()
         eyebrow=label('WELCOME TO TRIPWALA', 'subtitle'); eyebrow.setStyleSheet('color:#5d83b5; font-size:10px; font-weight:800;'); right_layout.addWidget(eyebrow)
         self.heading = label('Welcome back', 'title'); right_layout.addWidget(self.heading)
         self.intro = label('Sign in to manage your journeys.', 'subtitle'); right_layout.addWidget(self.intro); right_layout.addSpacing(24)
         self.name = field('Full name'); self.name.hide(); self.email = field('Email address'); self.password = field('Password', True)
         for w in (self.name, self.email, self.password): right_layout.addWidget(w)
-        self.submit = button('Sign in', self.submit_auth); right_layout.addWidget(self.submit)
+        self.submit = button('Sign in', self.submit_auth); self.submit.setStyleSheet('background:#ff8733; color:white; border-radius:9px; padding:14px; font-weight:800;'); right_layout.addWidget(self.submit)
         self.switch = button('New here? Create an account', self.toggle, 'secondary'); right_layout.addWidget(self.switch)
-        right_layout.addStretch(); right_layout.addWidget(label('Offline desktop project • Powered by MySQL', 'muted')); outer.addWidget(right, 4)
+        right_layout.addStretch(); right_layout.addWidget(label('Your travel plans, right here on your device.','muted')); outer.addWidget(right, 4)
         self.password.returnPressed.connect(self.submit_auth)
 
     def toggle(self):
@@ -260,18 +285,18 @@ class BookingPage(QWidget):
         top=QHBoxLayout(); top.addWidget(button('← Back to flights',lambda:dashboard.navigate(1),'secondary')); top.addStretch(); top.addWidget(label('FLIGHT  →  TRAVELLERS  →  REVIEW','subtitle')); outer.addLayout(top)
         outer.addWidget(label('Complete your booking','title')); outer.addWidget(label('Enter traveller details, then review before confirming.','subtitle'))
         content=QHBoxLayout(); content.setSpacing(18); outer.addLayout(content,1)
-        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); body=QWidget(); self.form=QVBoxLayout(body); self.form.setContentsMargins(2,2,2,2); self.form.setSpacing(12)
-        section=label('Traveller details'); section.setStyleSheet('font-size:18px; font-weight:800;'); self.form.addWidget(section)
-        self.form.addWidget(label('Passenger count','subtitle')); self.count=QSpinBox(); self.count.setRange(1,9); self.count.valueChanged.connect(self.update_passengers); self.form.addWidget(self.count)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); body=QFrame(); body.setObjectName('travellerForm'); body.setStyleSheet('QFrame#travellerForm { background:white; border:1px solid #dbe4f1; border-radius:15px; }'); self.form=QVBoxLayout(body); self.form.setContentsMargins(24,22,24,22); self.form.setSpacing(12)
+        section=label('Traveller details'); section.setStyleSheet('font-size:18px; font-weight:800; background:transparent;'); self.form.addWidget(section)
+        count_label=label('Passenger count','subtitle'); count_label.setStyleSheet('color:#788ba0; background:transparent;'); self.form.addWidget(count_label); self.count=QSpinBox(); self.count.setRange(1,9); self.count.valueChanged.connect(self.update_passengers); self.form.addWidget(self.count)
         self.passenger_container=QWidget(); self.passenger_layout=QVBoxLayout(self.passenger_container); self.passenger_layout.setContentsMargins(0,0,0,0); self.form.addWidget(self.passenger_container)
-        self.form.addWidget(label('Contact details','title')); self.email=field('Email for this booking'); self.phone=field('Mobile number'); self.form.addWidget(self.email); self.form.addWidget(self.phone)
-        self.form.addWidget(label('Simulation only • No payment will be collected.','subtitle')); self.form.addStretch(); scroll.setWidget(body); content.addWidget(scroll,3)
+        contact_title=label('Contact details'); contact_title.setStyleSheet('font-size:18px; font-weight:800; color:#1b3151; background:transparent;'); self.form.addWidget(contact_title); self.email=field('Email for this booking'); self.phone=field('Mobile number'); self.form.addWidget(self.email); self.form.addWidget(self.phone)
+        disclaimer=label('Simulation only • No payment will be collected.','subtitle'); disclaimer.setStyleSheet('color:#788ba0; background:transparent;'); self.form.addWidget(disclaimer); self.form.addStretch(); scroll.setWidget(body); content.addWidget(scroll,3)
         right=QFrame(); right.setObjectName('bookingSummary'); right.setStyleSheet('QFrame#bookingSummary { background:white; border:1px solid #dfe7f1; border-radius:15px; }'); summary=QVBoxLayout(right); summary.setContentsMargins(22,22,22,22)
         title=label('Your flight'); title.setStyleSheet('font-size:19px; font-weight:800; background:transparent;'); summary.addWidget(title)
         self.route=label(''); self.route.setWordWrap(True); self.route.setStyleSheet('background:transparent; font-size:21px; font-weight:800; color:#153869;'); summary.addWidget(self.route)
         self.details=label(''); self.details.setWordWrap(True); self.details.setStyleSheet('background:transparent; color:#708198; line-height:1.5;'); summary.addWidget(self.details); summary.addSpacing(16)
         self.fare=label(''); self.fare.setWordWrap(True); self.fare.setStyleSheet('background:transparent; color:#213c61; font-size:16px; font-weight:700;'); summary.addWidget(self.fare); summary.addStretch()
-        self.review=button('Review booking  →', self.review_booking); summary.addWidget(self.review); content.addWidget(right,2)
+        self.review=button('Review booking  →', self.review_booking); self.review.setStyleSheet('background:#ff8836; color:white; border-radius:9px; padding:14px 18px; font-weight:800;'); summary.addWidget(self.review); content.addWidget(right,2)
         self.update_passengers()
 
     def open_flight(self,flight):
@@ -310,12 +335,75 @@ class BookingPage(QWidget):
         except (Error, ValueError) as exc: QMessageBox.warning(self,'Could not book flight',str(exc))
 
 
+def simulated_progress(flight, now=None):
+    """Schedule-derived progress; no live aircraft position is implied."""
+    now=now or datetime.now()
+    if flight['status']=='Cancelled': return None
+    departure=flight['departure']+timedelta(minutes=flight['delay_minutes'])
+    arrival=flight['arrival']+timedelta(minutes=flight['delay_minutes'])
+    if flight['status']=='Arrived': return 100
+    if flight['status']!='Departed': return 0
+    duration=(arrival-departure).total_seconds()
+    if duration<=0: return 0
+    return max(0,min(100,int((now-departure).total_seconds()/duration*100)))
+
+
+class FlightTracker(QWidget):
+    def __init__(self, db):
+        super().__init__(); self.db=db; self.rows=[]; self.snapshot=None
+        layout=QVBoxLayout(self); layout.setContentsMargins(42,28,42,28); layout.setSpacing(14)
+        header=QHBoxLayout(); intro=QVBoxLayout(); intro.addWidget(label('Flight tracker','title')); intro.addWidget(label('Follow a simulated journey, from boarding to arrival.','subtitle')); header.addLayout(intro); header.addStretch()
+        tag=label('●  SIMULATION'); tag.setStyleSheet('color:#136c5b; background:#d9f2e7; padding:9px 14px; border-radius:12px; font-weight:800;'); header.addWidget(tag); layout.addLayout(header)
+        search=QHBoxLayout(); self.filter=field('Search flight number, airline or airport'); self.filter.returnPressed.connect(self.refresh); search.addWidget(self.filter,2)
+        search.addWidget(button('Find flights',self.refresh)); self.selector=QComboBox(); self.selector.setMinimumWidth(360); self.selector.currentIndexChanged.connect(self.show_selected); search.addWidget(self.selector,3); layout.addLayout(search)
+        self.count=label('','subtitle'); layout.addWidget(self.count)
+        self.card=QFrame(); self.card.setObjectName('trackerCard'); self.card.setStyleSheet('QFrame#trackerCard { background:#163a83; border-radius:18px; } QFrame#trackerCard QLabel { background:transparent; color:white; }'); card=QVBoxLayout(self.card); card.setContentsMargins(30,26,30,26); card.setSpacing(12)
+        top=QHBoxLayout(); self.flight_name=label('Choose a flight'); self.flight_name.setStyleSheet('font-size:18px; font-weight:800; color:white;'); top.addWidget(self.flight_name); top.addStretch(); self.status=label(''); self.status.setStyleSheet('font-size:12px; color:#ffd08a; font-weight:800;'); top.addWidget(self.status); card.addLayout(top); card.addStretch()
+        self.route=label('—    ✈    —'); self.route.setAlignment(Qt.AlignmentFlag.AlignCenter); self.route.setStyleSheet('font-size:42px; font-weight:800; color:white;'); card.addWidget(self.route)
+        self.progress=QProgressBar(); self.progress.setRange(0,100); self.progress.setTextVisible(False); self.progress.setFixedHeight(10); self.progress.setStyleSheet('QProgressBar { background:#345991; border:0; border-radius:5px; } QProgressBar::chunk { background:#ff9348; border-radius:5px; }'); card.addWidget(self.progress)
+        self.journey=label('Select a flight to see its journey.'); self.journey.setAlignment(Qt.AlignmentFlag.AlignCenter); self.journey.setStyleSheet('color:#d8e6ff; font-size:13px;'); card.addWidget(self.journey); card.addStretch(); layout.addWidget(self.card,1)
+        self.times=label(''); self.times.setWordWrap(True); self.times.setStyleSheet('background:#fffdf8; border:1px solid #ecdcc9; border-radius:12px; padding:18px; color:#1b3153; font-size:14px;'); layout.addWidget(self.times)
+        note=label('Illustrative progress based on simulated times and delays • Not live GPS or real flight data','subtitle'); note.setWordWrap(True); layout.addWidget(note)
+
+    def refresh(self):
+        term=self.filter.text().strip(); like='%'+term+'%'
+        rows=self.db.query("""SELECT * FROM flights WHERE departure >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+            AND departure < DATE_ADD(NOW(), INTERVAL 8 DAY)
+            AND (flight_number LIKE %s OR airline LIKE %s OR origin_code LIKE %s OR destination_code LIKE %s OR origin_city LIKE %s OR destination_city LIKE %s)
+            ORDER BY CASE WHEN status='Departed' THEN 0 WHEN status IN ('Boarding','Delayed') THEN 1 ELSE 2 END, ABS(TIMESTAMPDIFF(SECOND, NOW(), departure)), id LIMIT 500""",(like,)*6)
+        selected=self.selector.currentData(); snapshot=repr(rows)
+        if snapshot!=self.snapshot:
+            self.snapshot=snapshot; self.rows=rows; self.selector.blockSignals(True); self.selector.clear()
+            for f in rows: self.selector.addItem(f"{f['flight_number']}  ·  {f['origin_code']} → {f['destination_code']}  ·  {f['departure'].strftime('%d %b %H:%M')}", f['id'])
+            index=self.selector.findData(selected)
+            if index>=0: self.selector.setCurrentIndex(index)
+            self.selector.blockSignals(False)
+        self.count.setText(f'{len(rows)} flights shown · search by flight number or airport'); self.show_selected()
+
+    def show_selected(self, *_):
+        fid=self.selector.currentData(); flight=next((f for f in self.rows if f['id']==fid),None)
+        if not flight:
+            self.flight_name.setText('No flight selected'); self.status.clear(); self.route.setText('—    ✈    —'); self.journey.setText('No flights found. Try another search.'); self.progress.setValue(0); self.times.clear(); return
+        self.flight_name.setText(f"{flight['airline']}  ·  {flight['flight_number']}"); self.status.setText(flight['status'].upper())
+        self.route.setText(f"{flight['origin_code']}    ✈    {flight['destination_code']}")
+        percent=simulated_progress(flight); self.progress.setValue(percent or 0)
+        if percent is None: message='Flight cancelled'
+        elif flight['status']=='Arrived': message='Journey complete  ·  100%'
+        elif flight['status']=='Departed': message=f'In the air  ·  {percent}% of scheduled journey'
+        elif flight['status']=='Delayed': message=f"Delayed by {flight['delay_minutes']} minutes  ·  awaiting departure"
+        elif flight['status']=='Boarding': message='Boarding  ·  awaiting departure'
+        else: message='Scheduled  ·  awaiting departure'
+        self.journey.setText(message)
+        delay=timedelta(minutes=flight['delay_minutes']); departure=flight['departure']+delay; arrival=flight['arrival']+delay
+        self.times.setText(f"{flight['origin_city']}  →  {flight['destination_city']}\nScheduled: {dt(flight['departure'])}  →  {dt(flight['arrival'])}\nEstimated: {dt(departure)}  →  {dt(arrival)}")
+
+
 class Dashboard(QWidget):
     def __init__(self, db, user, logout):
         super().__init__(); self.db=db; self.user=user; self.logout=logout; self.admin=user['role']=='admin'
-        self._flight_snapshot=None; self._booking_snapshot=None
+        self._flight_snapshot=None; self._booking_snapshot=None; self._flight_rows=[]; self._flight_page=0
         self.stack=QStackedWidget(); self.nav_buttons=[]
-        pages = [('Home', self.overview_page()), ('Flights', self.flights_page()), ('My trips' if not self.admin else 'Bookings', self.bookings_page())]
+        pages = [('Home', self.overview_page()), ('Flights', self.flights_page()), ('My trips' if not self.admin else 'Bookings', self.bookings_page()), ('Tracker', self.tracker_page())]
         if self.admin:
             root=QHBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
             sidebar=QFrame(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(230); nav=QVBoxLayout(sidebar); nav.setContentsMargins(18,30,18,25)
@@ -334,6 +422,10 @@ class Dashboard(QWidget):
         self.booking_page=BookingPage(self) if not self.admin else None
         if self.booking_page: self.stack.addWidget(self.booking_page)
         self.navigate(0)
+
+    def tracker_page(self):
+        self.tracker=FlightTracker(self.db)
+        return self.tracker
 
     def page(self, title, subtitle):
         w=QWidget(); layout=QVBoxLayout(w); layout.setContentsMargins(42,36,42,32); layout.setSpacing(15)
@@ -355,15 +447,20 @@ class Dashboard(QWidget):
         note=label('A considered way to get from here to there.'); note.setStyleSheet('color:#96a49a; font-family:Georgia; font-size:15px;'); l.addWidget(note); l.addStretch(); return w
 
     def customer_home(self):
-        w=QWidget(); w.setStyleSheet('background:#eef3fa;'); l=QVBoxLayout(w); l.setContentsMargins(55,35,55,30); l.setSpacing(16)
-        welcome=QHBoxLayout(); a=QVBoxLayout(); a.addWidget(label('Let’s find your next flight.', 'title')); a.addWidget(label('Good to see you, '+self.user['name'].split()[0]+'. Where are you headed?', 'subtitle')); welcome.addLayout(a); welcome.addStretch(); v=label('FLIGHTS  /  ONE WAY'); v.setStyleSheet('color:#6584aa; font-weight:800; font-size:11px;'); welcome.addWidget(v); l.addLayout(welcome)
-        form=QFrame(); form.setObjectName('bookingForm'); form.setStyleSheet('QFrame#bookingForm { background:white; border:1px solid #dbe4ef; border-radius:18px; }'); fl=QVBoxLayout(form); fl.setContentsMargins(25,22,25,23); fl.setSpacing(15)
+        w=QWidget(); w.setStyleSheet('background:#f8f3eb;'); container=QVBoxLayout(w); container.setContentsMargins(0,0,0,0)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); scroll.setStyleSheet('QScrollArea { border:0; background:#f8f3eb; }'); content=QWidget(); l=QVBoxLayout(content); l.setContentsMargins(48,25,48,30); l.setSpacing(15); scroll.setWidget(content); container.addWidget(scroll)
+        welcome=QHBoxLayout(); a=QVBoxLayout(); a.addWidget(label('Namaste, '+self.user['name'].split()[0]+'! ✦', 'title')); a.addWidget(label('A little planning. A lot of going places.', 'subtitle')); welcome.addLayout(a); welcome.addStretch(); v=label('MADE FOR THE WAY YOU TRAVEL  /  INDIA'); v.setStyleSheet('color:#d26639; font-weight:800; font-size:10px;'); welcome.addWidget(v); l.addLayout(welcome)
+        hero=QFrame(); hero.setObjectName('posterHero'); hero.setMinimumHeight(185); hero.setStyleSheet('QFrame#posterHero { background:#163a83; border-radius:16px; }'); hero_row=QHBoxLayout(hero); hero_row.setContentsMargins(30,0,0,0); hero_row.setSpacing(0)
+        copy=QVBoxLayout(); copy.setContentsMargins(0,20,12,20); kicker=label('A LITTLE MORE INDIA  /  A LOT MORE YOU'); kicker.setStyleSheet('background:transparent; color:#f8c765; font-size:10px; font-weight:800;'); copy.addWidget(kicker)
+        heading=label('Chalo, let’s fly!'); heading.setStyleSheet('background:transparent; color:#fffaf0; font-size:33px; font-weight:800;'); copy.addWidget(heading)
+        hint=label('Big plans, small detours, new stories.\nYour next trip starts right here.'); hint.setStyleSheet('background:transparent; color:#d8e6ff; font-size:13px;'); copy.addWidget(hint); hero_row.addLayout(copy,2); hero_row.addWidget(PosterArt(),3); l.addWidget(hero)
+        form=QFrame(); form.setObjectName('bookingForm'); form.setStyleSheet('QFrame#bookingForm { background:#fffdf8; border:1px solid #ecdcc9; border-radius:18px; }'); fl=QVBoxLayout(form); fl.setContentsMargins(25,22,25,23); fl.setSpacing(15)
         tabs=QHBoxLayout(); trip=label('●  One way'); trip.setStyleSheet('color:#1563d4; font-weight:800; font-size:14px; background:transparent;'); tabs.addWidget(trip); tabs.addStretch(); note=label('Domestic flights  •  Economy'); note.setStyleSheet('color:#7f8fa4; background:transparent;'); tabs.addWidget(note); fl.addLayout(tabs)
         fields=QHBoxLayout(); fields.setSpacing(0); self.home_origin=field('City or airport code'); self.home_destination=field('City or airport code'); self.home_date=QDateEdit(QDate.currentDate()); self.home_date.setCalendarPopup(True); self.home_date.setDisplayFormat('dd MMM yyyy'); self.home_date_enabled=QCheckBox('Choose date')
         for title,widget in [('FROM',self.home_origin),('TO',self.home_destination),('DEPARTURE',self.home_date)]:
             box=QFrame(); box.setObjectName('bookingField'); box.setStyleSheet('QFrame#bookingField { background:#f8faff; border:1px solid #e0e8f3; } QLineEdit, QDateEdit { background:transparent; border:0; padding:5px 0; color:#1c3153; font-size:16px; font-weight:700; }'); v=QVBoxLayout(box); v.setContentsMargins(18,15,18,15); t=label(title); t.setStyleSheet('color:#8c9bad; font-size:10px; font-weight:800; background:transparent;'); v.addWidget(t); v.addWidget(widget); fields.addWidget(box,2 if title!='DEPARTURE' else 1)
         fl.addLayout(fields); bottom=QHBoxLayout(); bottom.addWidget(self.home_date_enabled); detail=label('Leave unchecked to see all dates'); detail.setStyleSheet('background:transparent; color:#8b99ab;'); bottom.addWidget(detail); bottom.addStretch(); search=button('SEARCH FLIGHTS  →',self.home_search); search.setStyleSheet('background:#ff8733; color:white; border-radius:9px; padding:15px 34px; font-weight:800; font-size:14px;'); bottom.addWidget(search); fl.addLayout(bottom); l.addWidget(form)
-        header=QHBoxLayout(); heading=label('Discover popular routes'); heading.setStyleSheet('font-size:21px; font-weight:800; color:#1a3152;'); header.addWidget(heading); header.addStretch(); header.addWidget(button('See all flights  →',lambda:self.navigate(1),'secondary')); l.addLayout(header)
+        header=QHBoxLayout(); heading=label('A little inspiration for you ✨'); heading.setStyleSheet('font-size:21px; font-weight:800; color:#1a3152;'); header.addWidget(heading); header.addStretch(); header.addWidget(button('See all flights  →',lambda:self.navigate(1),'secondary')); l.addLayout(header)
         routes=QHBoxLayout(); routes.setSpacing(14)
         for origin,dest,caption,subtitle,color in [('DEL','BOM','New Delhi to Mumbai','The city that never slows down','#d7e9fa'),('BLR','HYD','Bengaluru to Hyderabad','Food, culture and city lights','#e3e1f6'),('GOI','COK','Goa to Kochi','Your coastal escape awaits','#e1f2ec')]:
             card=QFrame(); card.setObjectName('popular'); card.setStyleSheet('QFrame#popular { background:white; border:1px solid #dce5f0; border-radius:14px; }'); c=QVBoxLayout(card); c.setContentsMargins(0,0,0,12); c.setSpacing(5)
@@ -392,24 +489,49 @@ class Dashboard(QWidget):
         else:
             scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); scroll.setStyleSheet('QScrollArea { background:transparent; border:0; }')
             content=QWidget(); content.setStyleSheet('background:transparent;'); self.results_layout=QVBoxLayout(content); self.results_layout.setContentsMargins(0,0,8,0); self.results_layout.setSpacing(10); self.results_layout.addStretch(); scroll.setWidget(content); l.addWidget(scroll,1)
+            pages=QHBoxLayout(); self.page_label=label('','subtitle'); pages.addWidget(self.page_label); pages.addStretch(); self.prev_page=button('← Previous',lambda:self.change_flight_page(-1),'secondary'); self.next_page=button('Next →',lambda:self.change_flight_page(1),'secondary'); pages.addWidget(self.prev_page); pages.addWidget(self.next_page); l.addLayout(pages)
         return w
 
     def flight_card(self,r):
-        card=QFrame(); card.setObjectName('flightCard'); card.setStyleSheet('QFrame#flightCard { background:white; border:1px solid #e0e7f1; border-radius:13px; } QLabel { background:transparent; }'); layout=QHBoxLayout(card); layout.setContentsMargins(20,16,20,16); layout.setSpacing(16)
-        airline=QVBoxLayout(); name=label(r['airline']); name.setStyleSheet('font-size:15px; font-weight:800; color:#1a2e49;'); airline.addWidget(name); airline.addWidget(label(r['flight_number'],'subtitle')); layout.addLayout(airline,2)
-        dep=QVBoxLayout(); t=label(r['departure'].strftime('%H:%M')); t.setStyleSheet('font-size:22px; font-weight:800; color:#17243c;'); dep.addWidget(t); dep.addWidget(label(r['origin_code']+'  ·  '+r['departure'].strftime('%d %b'),'subtitle')); layout.addLayout(dep,1)
-        duration=r['arrival']-r['departure']; mins=int(duration.total_seconds()//60); mid=QVBoxLayout(); mid.addWidget(label(f'{mins//60}h {mins%60:02}m','subtitle')); mid.addWidget(label('──────  ✈  ──────','subtitle')); mid.addWidget(label('Non-stop','subtitle')); layout.addLayout(mid,2)
-        arr=QVBoxLayout(); t=label(r['arrival'].strftime('%H:%M')); t.setStyleSheet('font-size:22px; font-weight:800; color:#17243c;'); arr.addWidget(t); arr.addWidget(label(r['destination_code']+'  ·  '+r['arrival'].strftime('%d %b'),'subtitle')); layout.addLayout(arr,1)
-        price=QVBoxLayout(); amount=label(money(r['price'])); amount.setStyleSheet('font-size:21px; font-weight:800; color:#182d49;'); price.addWidget(amount); price.addWidget(label('per passenger','subtitle')); layout.addLayout(price,1)
-        right=QVBoxLayout(); book=button('BOOK',lambda checked=False,fid=r['id']:self.book_flight(fid)); book.setStyleSheet('background:#1264d5; color:white; border-radius:8px; padding:12px 20px; font-weight:800;'); right.addWidget(book); status=r['status']+(f" +{r['delay_minutes']}m" if r['delay_minutes'] else ''); right.addWidget(label(f"{status} · {r['available']} seats",'subtitle')); layout.addLayout(right,1)
-        return card
+        card=QFrame(); card.setMinimumHeight(164); card.setObjectName('flightCard'); card.setStyleSheet('QFrame#flightCard { background:white; border:1px solid #dbe4f1; border-radius:14px; } QFrame#flightCard QLabel { background:transparent; }'); outer=QVBoxLayout(card); outer.setContentsMargins(22,18,22,16); outer.setSpacing(12)
+        top=QHBoxLayout(); chip=label('✈'); chip.setAlignment(Qt.AlignmentFlag.AlignCenter); chip.setFixedSize(36,36); chip.setStyleSheet('background:#e9f1ff; color:#1461c9; border-radius:10px; font-size:17px; font-weight:800;'); top.addWidget(chip)
+        names=QVBoxLayout(); names.setSpacing(2); title=label(r['airline']); title.setStyleSheet('font-size:15px; font-weight:800; color:#1b3151;'); names.addWidget(title); names.addWidget(label(r['flight_number']+'   •   Economy','subtitle')); top.addLayout(names); top.addStretch()
+        status=r['status']+(f" +{r['delay_minutes']} min" if r['delay_minutes'] else '')
+        st=label(status.upper()); st.setStyleSheet('color:#1b775f; font-size:10px; font-weight:800;'); top.addWidget(st); outer.addLayout(top)
+        middle=QHBoxLayout(); middle.setSpacing(18)
+        for time,code in [(r['departure'],r['origin_code']), (r['arrival'],r['destination_code'])]:
+            if code==r['destination_code']:
+                duration=r['arrival']-r['departure']; mins=int(duration.total_seconds()//60); line=QVBoxLayout(); line.setSpacing(4)
+                length=label(f'{mins//60}h {mins%60:02}m'); length.setAlignment(Qt.AlignmentFlag.AlignCenter); length.setStyleSheet('font-size:11px; color:#7587a0;'); line.addWidget(length)
+                route=label('● ───────────── ✈ ───────────── ●'); route.setAlignment(Qt.AlignmentFlag.AlignCenter); route.setStyleSheet('color:#8eb4e4; font-size:12px;'); line.addWidget(route)
+                direct=label('NON-STOP'); direct.setAlignment(Qt.AlignmentFlag.AlignCenter); direct.setStyleSheet('font-size:10px; color:#8d9bb0; font-weight:700;'); line.addWidget(direct); middle.addLayout(line,2)
+            column=QVBoxLayout(); column.setSpacing(3); t=label(time.strftime('%H:%M')); t.setStyleSheet('font-size:28px; font-weight:800; color:#163157;'); column.addWidget(t)
+            city=label(code+'  ·  '+time.strftime('%d %b')); city.setStyleSheet('color:#71839b; font-size:12px;'); column.addWidget(city); middle.addLayout(column,1)
+        middle.addStretch(); price=QVBoxLayout(); price.setSpacing(3); amount=label(money(r['price'])); amount.setStyleSheet('font-size:24px; font-weight:800; color:#17335a;'); price.addWidget(amount); price.addWidget(label('per passenger','subtitle')); middle.addLayout(price,1)
+        book=button('Select flight  →',lambda checked=False,fid=r['id']:self.book_flight(fid)); book.setStyleSheet('background:#ff8836; color:white; border-radius:9px; padding:13px 18px; font-weight:800;'); middle.addWidget(book); outer.addLayout(middle)
+        footer=label(f"{r['available']} seats available  •  Flight status may change"); footer.setStyleSheet('color:#8797ac; font-size:11px;'); outer.addWidget(footer); return card
 
     def bookings_page(self):
-        w,l=self.page('All bookings' if self.admin else 'Your trips', 'A record of passenger reservations.' if self.admin else 'All your upcoming plans, in one place.')
-        self.booking_table=table(['BOOKING','PASSENGER','FLIGHT','ROUTE','DEPARTURE','SEATS','TOTAL','STATUS']); l.addWidget(self.booking_table,1)
-        actions=QHBoxLayout(); actions.addWidget(label('Select a booking to manage it.','muted')); actions.addStretch()
-        if not self.admin: actions.addWidget(button('Cancel booking',self.cancel_booking,'danger'))
-        actions.addWidget(button('Refresh',self.refresh_bookings,'secondary')); l.addLayout(actions); return w
+        w,l=self.page('All bookings' if self.admin else 'Your trips', 'A record of passenger reservations.' if self.admin else 'Your journeys, all in one place.')
+        if self.admin:
+            self.booking_table=table(['BOOKING','PASSENGER','FLIGHT','ROUTE','DEPARTURE','SEATS','TOTAL','STATUS']); l.addWidget(self.booking_table,1)
+            actions=QHBoxLayout(); actions.addStretch(); actions.addWidget(button('Refresh',self.refresh_bookings,'secondary')); l.addLayout(actions)
+        else:
+            self.trips_header=label('YOUR TRAVEL BOARD'); self.trips_header.setStyleSheet('font-size:11px; color:#758ba9; font-weight:800;'); l.addWidget(self.trips_header)
+            scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); scroll.setStyleSheet('QScrollArea { background:transparent; border:0; }')
+            content=QWidget(); self.trips_layout=QVBoxLayout(content); self.trips_layout.setContentsMargins(0,0,8,0); self.trips_layout.setSpacing(12); scroll.setWidget(content); l.addWidget(scroll,1)
+        return w
+
+    def trip_card(self,r):
+        card=QFrame(); card.setMaximumHeight(190); card.setObjectName('tripCard'); card.setStyleSheet('QFrame#tripCard { background:white; border:1px solid #dbe4f1; border-radius:14px; } QFrame#tripCard QLabel { background:transparent; }'); row=QHBoxLayout(card); row.setContentsMargins(0,0,20,0); row.setSpacing(20)
+        side=QFrame(); side.setObjectName('tripSide'); side.setFixedWidth(190); side.setStyleSheet('QFrame#tripSide { background:#153968; border-top-left-radius:14px; border-bottom-left-radius:14px; }'); box=QVBoxLayout(side); box.setContentsMargins(20,18,20,18)
+        tag=label('✈   TRIPWALA'); tag.setStyleSheet('color:#b6d0ef; font-size:10px; font-weight:800;'); box.addWidget(tag); code=label(f"{r['origin_code']}\n  ↓\n{r['destination_code']}"); code.setStyleSheet('color:white; font-size:23px; font-weight:800;'); box.addWidget(code); box.addStretch(); ref=label(f"FD-{r['id']:05}"); ref.setStyleSheet('color:#c5d8f0;'); box.addWidget(ref); row.addWidget(side)
+        details=QVBoxLayout(); details.setContentsMargins(0,18,0,18); title=label(f"{r['origin_code']}  →  {r['destination_code']}"); title.setStyleSheet('font-size:21px; color:#1b3153; font-weight:800;'); details.addWidget(title)
+        details.addWidget(label(f"{r['airline']}  ·  {r['flight_number']}  ·  {dt(r['departure'])}",'subtitle')); details.addSpacing(8)
+        details.addWidget(label(f"{r['seats']} traveller(s)    •    {money(r['total_price'])}    •    {r['status']} / {r['flight_status']}",'subtitle')); row.addLayout(details,1)
+        if r['status']=='Confirmed' and r['departure']>datetime.now():
+            cancel=button('Cancel booking',lambda checked=False,bid=r['id']:self.cancel_booking(bid),'danger'); row.addWidget(cancel)
+        return card
 
     def safe(self, fn):
         try: fn()
@@ -418,12 +540,12 @@ class Dashboard(QWidget):
     def navigate(self,index):
         self.stack.setCurrentIndex(index)
         for i,b in enumerate(self.nav_buttons): b.setChecked(i==index)
-        self.safe([self.refresh_stats,self.refresh_flights,self.refresh_bookings][index])
+        self.safe([self.refresh_stats,self.refresh_flights,self.refresh_bookings,self.tracker.refresh][index])
 
     def tick(self):
         try:
             self.db.simulate()
-            if self.stack.currentIndex() < 3: [self.refresh_stats,self.refresh_flights,self.refresh_bookings][self.stack.currentIndex()]()
+            if self.stack.currentIndex() < 4: [self.refresh_stats,self.refresh_flights,self.refresh_bookings,self.tracker.refresh][self.stack.currentIndex()]()
         except Error: pass
 
     def refresh_stats(self):
@@ -447,24 +569,45 @@ class Dashboard(QWidget):
                 for index in range(self.flight_table.rowCount()):
                     if self.flight_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.flight_table.selectRow(index); break
         else:
-            while self.results_layout.count():
-                item=self.results_layout.takeAt(0)
-                if item.widget(): item.widget().deleteLater()
-            for r in rows: self.results_layout.addWidget(self.flight_card(r))
-            if not rows: self.results_layout.addWidget(label('No flights found. Try another route or date.', 'subtitle'))
-            self.results_layout.addStretch()
+            self._flight_rows=rows; self._flight_page=0; self.render_flight_page()
         self.flight_hint.setText(f'{len(rows)} flights found' + (' · select a flight to manage it' if self.admin else ' · prices per passenger'))
 
+    def change_flight_page(self, delta):
+        pages=max(1,(len(self._flight_rows)+19)//20)
+        self._flight_page=max(0,min(pages-1,self._flight_page+delta)); self.render_flight_page()
+
+    def render_flight_page(self):
+        while self.results_layout.count():
+            item=self.results_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        rows=self._flight_rows[self._flight_page*20:(self._flight_page+1)*20]
+        for row in rows: self.results_layout.addWidget(self.flight_card(row))
+        if not rows: self.results_layout.addWidget(label('No flights found. Try another route or date.', 'subtitle'))
+        self.results_layout.addStretch(); self.results_layout.parentWidget().setMinimumHeight(max(150,len(rows)*180)); pages=max(1,(len(self._flight_rows)+19)//20)
+        self.page_label.setText(f'Page {self._flight_page+1} of {pages}'); self.prev_page.setEnabled(self._flight_page>0); self.next_page.setEnabled(self._flight_page+1<pages)
+
     def refresh_bookings(self):
-        rows=self.db.bookings(None if self.admin else self.user['id'])
-        snapshot=repr(rows)
+        rows=self.db.bookings(None if self.admin else self.user['id']); snapshot=repr(rows)
         if snapshot == self._booking_snapshot: return
         self._booking_snapshot=snapshot
-        selected=selected_id(self.booking_table)
-        fill(self.booking_table,[(r['id'],[f"FD-{r['id']:05}",r['name'],r['flight_number'],r['origin_code']+'  →  '+r['destination_code'],dt(r['departure']),r['seats'],money(r['total_price']),r['status']+' / '+r['flight_status']]) for r in rows])
-        if selected is not None:
-            for index in range(self.booking_table.rowCount()):
-                if self.booking_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.booking_table.selectRow(index); break
+        if self.admin:
+            selected=selected_id(self.booking_table)
+            fill(self.booking_table,[(r['id'],[f"FD-{r['id']:05}",r['name'],r['flight_number'],r['origin_code']+'  →  '+r['destination_code'],dt(r['departure']),r['seats'],money(r['total_price']),r['status']+' / '+r['flight_status']]) for r in rows])
+            if selected is not None:
+                for index in range(self.booking_table.rowCount()):
+                    if self.booking_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.booking_table.selectRow(index); break
+        else:
+            while self.trips_layout.count():
+                item=self.trips_layout.takeAt(0)
+                if item.widget(): item.widget().deleteLater()
+            if not rows:
+                empty=QFrame(); empty.setObjectName('emptyTrips'); empty.setStyleSheet('QFrame#emptyTrips { background:white; border:1px solid #dbe4f1; border-radius:16px; }'); box=QVBoxLayout(empty); box.setContentsMargins(35,35,35,35)
+                icon=label('✈'); icon.setStyleSheet('color:#ff8a38; font-size:36px;'); box.addWidget(icon)
+                title=label('Your next journey starts here'); title.setStyleSheet('font-size:22px; font-weight:800; color:#1b3151;'); box.addWidget(title)
+                box.addWidget(label('When you book a flight, your itinerary will appear here.','subtitle')); box.addWidget(button('Explore flights  →',lambda:self.navigate(1))); self.trips_layout.addWidget(empty)
+            else:
+                for r in rows: self.trips_layout.addWidget(self.trip_card(r))
+            self.trips_layout.addStretch()
 
     def book_flight(self, fid=None):
         if fid is None: return
@@ -475,8 +618,8 @@ class Dashboard(QWidget):
             for b in self.nav_buttons: b.setChecked(False)
         self.safe(action)
 
-    def cancel_booking(self):
-        bid=selected_id(self.booking_table)
+    def cancel_booking(self, bid=None):
+        if bid is None and self.admin: bid=selected_id(self.booking_table)
         if bid is None: QMessageBox.information(self,'Select a booking','Choose a booking first.'); return
         if QMessageBox.question(self,'Cancel booking','Cancel this booking?') != QMessageBox.StandardButton.Yes: return
         self.safe(lambda:(self.db.cancel_booking(bid,self.user['id']),self.refresh_bookings()))
