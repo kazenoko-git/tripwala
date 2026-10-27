@@ -15,8 +15,9 @@ Screenshots show illustrative sample data.
 - Register and sign in as a traveller; passwords are salted and hashed.
 - Search flights by origin, destination and optional departure date, book seats, see bookings and cancel future bookings.
 - Sign in as an administrator to add flights, set delays, cancel flights and view all bookings.
-- A local timer updates flight status every 30 seconds based on the computer's clock: scheduled, boarding, delayed, departed and arrived. Admin cancellations remain cancelled. Delay shifts the simulated departure and arrival. The simulator runs while the app is open; opening it again catches up based on the current time.
-- The first launch creates sample flights for roughly the next week. These are fictional demonstration records, not live airline data. Admins can add more flights as time passes.
+- A local timer updates flight statuses every 2 seconds while the app is open. Flight times advance with the real clock; reopening the app catches statuses up.
+- The simulator maintains seven calendar days of fictional flights and checks every 30 seconds for flights within two hours of departure. Each eligible flight gets one 12% chance of a 15–60 minute delay. Delays shift simulated departure and arrival. Admin-set delays (including zero) override automatic delays; cancelled flights remain cancelled.
+- Flights are fictional demonstration records, not live airline data. The simulation runs only while the app is open; missed delay rolls are not replayed after reopening.
 
 ## Requirements
 

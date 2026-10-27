@@ -30,6 +30,8 @@ class Database:
     def __init__(self, host, port, user, password):
         self.config = dict(host=host, port=int(port), user=user, password=password, connection_timeout=5)
         self.connection = None
+        self._last_schedule_check = None
+        self._last_delay_check = None
 
     def connect(self):
         self.connection = mysql.connector.connect(**self.config)
@@ -39,6 +41,14 @@ class Database:
         cursor.execute(f'USE {DATABASE}')
         for statement in SCHEMA:
             cursor.execute(statement)
+        # Existing installations gain simulator metadata without losing bookings.
+        cursor.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='flights'", (DATABASE,))
+        columns = {row[0] for row in cursor.fetchall()}
+        if 'delay_checked' not in columns:
+            cursor.execute('ALTER TABLE flights ADD COLUMN delay_checked BOOLEAN NOT NULL DEFAULT FALSE')
+        if 'delay_locked' not in columns:
+            cursor.execute('ALTER TABLE flights ADD COLUMN delay_locked BOOLEAN NOT NULL DEFAULT FALSE')
+        cursor.execute("CREATE TABLE IF NOT EXISTS simulator_days (flight_date DATE PRIMARY KEY) ENGINE=InnoDB")
         self.connection.commit()
         cursor.close()
         self.seed()
@@ -151,8 +161,59 @@ class Database:
     def cancel_booking(self, booking_id, user_id):
         self.execute("UPDATE bookings b JOIN flights f ON f.id=b.flight_id SET b.status='Cancelled' WHERE b.id=%s AND b.user_id=%s AND b.status='Confirmed' AND f.departure > NOW()", (booking_id, user_id))
 
+    def generate_flights(self, now=None):
+        """Keep seven calendar days of fictional schedules; each date is generated once."""
+        now = now or datetime.now()
+        airlines = [('AI', 'Air India'), ('6E', 'IndiGo'), ('IX', 'Air India Express'), ('SG', 'SpiceJet')]
+        for offset in range(7):
+            date = (now + timedelta(days=offset)).date()
+            rng = random.Random(date.toordinal())
+            cur = self.cursor()
+            try:
+                self.connection.start_transaction()
+                cur.execute('INSERT IGNORE INTO simulator_days (flight_date) VALUES (%s)', (date,))
+                if cur.rowcount:
+                    rows = []
+                    for i in range(24):
+                        origin = AIRPORTS[i % len(AIRPORTS)]
+                        destination = AIRPORTS[(i + 1 + i // len(AIRPORTS)) % len(AIRPORTS)]
+                        prefix, airline = airlines[i % len(airlines)]
+                        departure = datetime.combine(date, datetime.min.time()) + timedelta(hours=5 + (i * 2 % 18), minutes=(i % 4) * 15)
+                        # Do not insert flights that have already departed today.
+                        if departure <= now: continue
+                        arrival = departure + timedelta(minutes=rng.randrange(75, 181, 15))
+                        rows.append((f'{prefix} {500+i}', airline, origin[0], origin[1], destination[0], destination[1], departure, arrival, rng.randrange(3200, 9800, 100), 120))
+                    if rows:
+                        cur.executemany('INSERT INTO flights (flight_number,airline,origin_code,origin_city,destination_code,destination_city,departure,arrival,price,total_seats) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', rows)
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
+            finally:
+                cur.close()
+
+    def simulate_delays(self, rng=None):
+        """Once within two hours of departure, give each untouched flight one delay roll."""
+        rng = rng or random.SystemRandom()
+        rows = self.query("""SELECT id FROM flights WHERE delay_checked=FALSE AND delay_locked=FALSE
+            AND status IN ('Scheduled','Boarding') AND delay_minutes=0
+            AND departure > NOW() AND departure <= DATE_ADD(NOW(), INTERVAL 2 HOUR)""")
+        for flight in rows:
+            minutes = rng.choice((15, 30, 45, 60)) if rng.random() < 0.12 else 0
+            # Conditional update ensures an admin override wins a race with the simulator.
+            self.execute("""UPDATE flights SET delay_checked=TRUE, delay_minutes=%s
+                WHERE id=%s AND delay_checked=FALSE AND delay_locked=FALSE AND delay_minutes=0
+                AND status IN ('Scheduled','Boarding') AND departure > NOW()""", (minutes, flight['id']))
+
     def simulate(self):
-        """Advance scheduled flights using wall-clock time, retaining delays/cancellations."""
+        """Refresh flight states frequently; replenish schedules and roll delays periodically."""
+        now = datetime.now()
+        if self._last_schedule_check is None or now - self._last_schedule_check >= timedelta(minutes=1):
+            self.generate_flights(now)
+            self._last_schedule_check = now
+        if self._last_delay_check is None or now - self._last_delay_check >= timedelta(seconds=30):
+            self.simulate_delays()
+            self._last_delay_check = now
         self.execute("""UPDATE flights SET status=CASE
             WHEN status='Cancelled' THEN 'Cancelled'
             WHEN NOW() >= DATE_ADD(arrival, INTERVAL delay_minutes MINUTE) THEN 'Arrived'

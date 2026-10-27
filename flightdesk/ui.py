@@ -214,6 +214,7 @@ class FlightDialog(QDialog):
 class Dashboard(QWidget):
     def __init__(self, db, user, logout):
         super().__init__(); self.db=db; self.user=user; self.logout=logout; self.admin=user['role']=='admin'
+        self._flight_snapshot=None; self._booking_snapshot=None
         self.stack=QStackedWidget(); self.nav_buttons=[]
         pages = [('Home', self.overview_page()), ('Flights', self.flights_page()), ('My trips' if not self.admin else 'Bookings', self.bookings_page())]
         if self.admin:
@@ -232,7 +233,6 @@ class Dashboard(QWidget):
                 b=button(name,lambda checked=False,i=index:self.navigate(i)); b.setCheckable(True); nav.addWidget(b); self.nav_buttons.append(b); self.stack.addWidget(page)
             nav.addStretch(); profile=label('●   '+user['name']); nav.addWidget(profile); nav.addWidget(button('Sign out',logout)); root.addWidget(top); root.addWidget(self.stack,1)
         self.navigate(0)
-        self.timer=QTimer(self); self.timer.timeout.connect(self.tick); self.timer.start(30000)
 
     def page(self, title, subtitle):
         w=QWidget(); layout=QVBoxLayout(w); layout.setContentsMargins(42,36,42,32); layout.setSpacing(15)
@@ -335,9 +335,16 @@ class Dashboard(QWidget):
         if self.admin:
             rows=self.db.query("SELECT f.*, f.total_seats-COALESCE(SUM(CASE WHEN b.status='Confirmed' THEN b.seats ELSE 0 END),0) AS available FROM flights f LEFT JOIN bookings b ON f.id=b.flight_id WHERE (f.origin_city LIKE %s OR f.origin_code LIKE %s) AND (f.destination_city LIKE %s OR f.destination_code LIKE %s) GROUP BY f.id ORDER BY f.departure DESC LIMIT 200", tuple([f'%{self.origin.text().strip()}%']*2+[f'%{self.destination.text().strip()}%']*2))
         else: rows=self.db.flights(self.origin.text().strip(),self.destination.text().strip(), self.search_date.date().toPython() if self.date_filter.isChecked() else None)
+        if self.admin and self.date_filter.isChecked(): rows=[r for r in rows if r['departure'].date()==self.search_date.date().toPython()]
+        snapshot = repr(rows)
+        if snapshot == self._flight_snapshot: return
+        self._flight_snapshot = snapshot
         if self.admin:
-            if self.date_filter.isChecked(): rows=[r for r in rows if r['departure'].date()==self.search_date.date().toPython()]
+            selected = selected_id(self.flight_table)
             fill(self.flight_table,[(r['id'],[r['flight_number']+'  ·  '+r['airline'], r['origin_code']+'  →  '+r['destination_code'],dt(r['departure']),dt(r['arrival']),r['status']+(f" +{r['delay_minutes']}m" if r['delay_minutes'] else ''),r['available'],money(r['price'])]) for r in rows])
+            if selected is not None:
+                for index in range(self.flight_table.rowCount()):
+                    if self.flight_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.flight_table.selectRow(index); break
         else:
             while self.results_layout.count():
                 item=self.results_layout.takeAt(0)
@@ -349,7 +356,14 @@ class Dashboard(QWidget):
 
     def refresh_bookings(self):
         rows=self.db.bookings(None if self.admin else self.user['id'])
+        snapshot=repr(rows)
+        if snapshot == self._booking_snapshot: return
+        self._booking_snapshot=snapshot
+        selected=selected_id(self.booking_table)
         fill(self.booking_table,[(r['id'],[f"FD-{r['id']:05}",r['name'],r['flight_number'],r['origin_code']+'  →  '+r['destination_code'],dt(r['departure']),r['seats'],money(r['total_price']),r['status']+' / '+r['flight_status']]) for r in rows])
+        if selected is not None:
+            for index in range(self.booking_table.rowCount()):
+                if self.booking_table.item(index,0).data(Qt.ItemDataRole.UserRole)==selected: self.booking_table.selectRow(index); break
 
     def book_flight(self, fid=None):
         if fid is None and self.admin: fid=selected_id(self.flight_table)
@@ -374,7 +388,7 @@ class Dashboard(QWidget):
         fid=selected_id(self.flight_table)
         if fid is None: QMessageBox.information(self,'Select a flight','Choose a flight first.'); return
         minutes,ok=QInputDialog.getInt(self,'Update delay','Delay in minutes (0 clears delay):',0,0,1440)
-        if ok: self.safe(lambda:(self.db.execute("UPDATE flights SET delay_minutes=%s WHERE id=%s AND status NOT IN ('Cancelled','Departed','Arrived')",(minutes,fid)),self.db.simulate(),self.refresh_flights()))
+        if ok: self.safe(lambda:(self.db.execute("UPDATE flights SET delay_minutes=%s, delay_locked=TRUE, delay_checked=TRUE WHERE id=%s AND status NOT IN ('Cancelled','Departed','Arrived')",(minutes,fid)),self.db.simulate(),self.refresh_flights()))
 
     def cancel_flight(self):
         fid=selected_id(self.flight_table)
@@ -385,7 +399,12 @@ class Dashboard(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self,db):
-        super().__init__(); self.db=db; self.setWindowTitle('TripWala'); self.setWindowIcon(brand_icon()); self.resize(1300,800); self.setMinimumSize(1050,650); self.auth=Auth(db,self.login); self.setCentralWidget(self.auth)
+        super().__init__(); self.db=db; self.setWindowTitle('TripWala'); self.setWindowIcon(brand_icon()); self.resize(1300,800); self.setMinimumSize(1050,650); self.auth=Auth(db,self.login); self.setCentralWidget(self.auth); self.timer=QTimer(self); self.timer.timeout.connect(self.tick); self.timer.start(2000)
+    def tick(self):
+        if isinstance(self.centralWidget(), Dashboard): self.centralWidget().tick()
+        else:
+            try: self.db.simulate()
+            except Error: pass
     def login(self,user): self.setCentralWidget(Dashboard(self.db,user,self.signout))
     def signout(self): self.auth=Auth(self.db,self.login); self.setCentralWidget(self.auth)
     def closeEvent(self,event):
