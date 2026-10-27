@@ -33,6 +33,7 @@ class Database:
 
     def connect(self):
         self.connection = mysql.connector.connect(**self.config)
+        self.connection.autocommit = True
         cursor = self.connection.cursor()
         cursor.execute(f'CREATE DATABASE IF NOT EXISTS {DATABASE} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci')
         cursor.execute(f'USE {DATABASE}')
